@@ -1,0 +1,9 @@
+node_modules/
+.env
+.wwebjs_auth/
+.wwebjs_cache/
+saved_memories.json
+reminders.json
+chat_history.json
+mem_media/
+*.log

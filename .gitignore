@@ -4,6 +4,7 @@ node_modules/
 .wwebjs_cache/
 saved_memories.json
 reminders.json
+important_updates.json
 chat_history.json
 mem_media/
 *.log

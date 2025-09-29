@@ -24,7 +24,7 @@ const MY_CHAT_ID = '918227967496@c.us';
 const MY_TELEGRAM_CHAT_ID = process.env.MY_TELEGRAM_CHAT_ID;
 
 // Unique bot message identifier to prevent processing own messages
-const BOT_MESSAGE_PREFIX = '🤖QBOT_MSG_X7Y9Z2:';
+const BOT_MESSAGE_PREFIX = 'Shash';
 
 // Telegram bot for cross-platform notifications
 let telegramBot = null;
@@ -180,10 +180,10 @@ client.on('message', async (message) => {
         if (command === '!dbg status') {
             const activeRemindersCount = reminders.filter(r => r.active).length;
             const status = `📊 Bot Status:
-• Memories: ${memories.length}
-• Active reminders: ${activeRemindersCount}
-• Important updates: ${importantUpdates.length}
-• Chat history: ${chatHistory[chatId]?.length || 0} messages`;
+            • Memories: ${memories.length}
+            • Active reminders: ${activeRemindersCount}
+            • Important updates: ${importantUpdates.length}
+            • Chat history: ${chatHistory[chatId]?.length || 0} messages`;
             await sendToMyChat(status);
             return;
         }
@@ -424,25 +424,25 @@ async function categorizeMessage(messageBody, fromChatId) {
     
     const categorizePrompt = `Analyze this message and categorize it. Return JSON format:
 
-{
-  "type": "REMINDER|MEMORY|IMPORTANT|NONE",
-  "priority": "HIGH|MEDIUM|LOW",
-  "content": "formatted for whatsapp and briefly summarised extracted content ensuring easy readability",
-  "datetime": "exact date/time as mentioned in message, null if no date/time"
-}
+        {
+        "type": "REMINDER|MEMORY|IMPORTANT|NONE",
+        "priority": "HIGH|MEDIUM|LOW",
+        "content": "formatted for whatsapp and briefly summarised extracted content ensuring easy readability",
+        "datetime": "exact date/time as mentioned in message, null if no date/time"
+        }
 
-Rules:
-- REMINDER: Contains time/date references, tasks to do
-- MEMORY: Personal info, preferences, facts to remember
-- IMPORTANT: Urgent info, updates, news
-- HIGH priority: Urgent, time-sensitive, emergency
-- MEDIUM priority: Important but not urgent
-- LOW priority: General info
-- For datetime: Extract EXACTLY as written (e.g. "tomorrow at 3pm", "21st September 2025", "10am")
+        Rules:
+        - REMINDER: Contains time/date references, tasks to do
+        - MEMORY: Personal info, preferences, facts to remember
+        - IMPORTANT: Urgent info, updates, news
+        - HIGH priority: Urgent, time-sensitive, emergency
+        - MEDIUM priority: Important but not urgent
+        - LOW priority: General info
+        - For datetime: Extract EXACTLY as written (e.g. "tomorrow at 3pm", "21st September 2025", "10am")
 
-Message: "${messageBody}"
+        Message: "${messageBody}"
 
-Return only valid JSON:`;
+        Return only valid JSON:`;
     
     try {
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
@@ -626,21 +626,21 @@ async function interpretCommand(userCommand) {
     
     const interpretPrompt = `Analyze this user command and return ONLY one of these exact actions if it matches, otherwise return "NONE":
 
-Actions:
-- "SHOW_MEMORIES" - if user wants to see/list/show their memories or asks what they've saved
-- "SHOW_REMINDERS" - if user wants to see/list/show their reminders or scheduled tasks
-- "SAVE_MEMORY" - if user wants to save something to memory
-- "SET_REMINDER" - if user wants to set a reminder or be reminded of something
-- "DELETE_MEMORY" - if user wants to delete/remove a memory
-- "CANCEL_REMINDER" - if user wants to cancel/delete a reminder
-- "DELETE_ALL_MEMORIES" - if user wants to delete/clear all memories
-- "DELETE_ALL_REMINDERS" - if user wants to delete/clear all reminders
-- "SHOW_UPDATES" - if user wants to see important updates
-- "DELETE_ALL_UPDATES" - if user wants to clear all updates
+        Actions:
+        - "SHOW_MEMORIES" - if user wants to see/list/show their memories or asks what they've saved
+        - "SHOW_REMINDERS" - if user wants to see/list/show their reminders or scheduled tasks
+        - "SAVE_MEMORY" - if user wants to save something to memory
+        - "SET_REMINDER" - if user wants to set a reminder or be reminded of something
+        - "DELETE_MEMORY" - if user wants to delete/remove a memory
+        - "CANCEL_REMINDER" - if user wants to cancel/delete a reminder
+        - "DELETE_ALL_MEMORIES" - if user wants to delete/clear all memories
+        - "DELETE_ALL_REMINDERS" - if user wants to delete/clear all reminders
+        - "SHOW_UPDATES" - if user wants to see important updates
+        - "DELETE_ALL_UPDATES" - if user wants to clear all updates
 
-User command: "${userCommand}"
+        User command: "${userCommand}"
 
-Return only the action name or "NONE":`;
+        Return only the action name or "NONE":`;
     
     try {
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {

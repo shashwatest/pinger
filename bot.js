@@ -24,7 +24,7 @@ const MY_CHAT_ID = '918227967496@c.us';
 const MY_TELEGRAM_CHAT_ID = process.env.MY_TELEGRAM_CHAT_ID;
 
 // Unique bot message identifier to prevent processing own messages
-const BOT_MESSAGE_PREFIX = 'Shash';
+const BOT_MESSAGE_PREFIX = 'ShashBot';
 
 // Telegram bot for cross-platform notifications
 let telegramBot = null;

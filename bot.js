@@ -24,7 +24,7 @@ const MY_CHAT_ID = '918227967496@c.us';
 const MY_TELEGRAM_CHAT_ID = process.env.MY_TELEGRAM_CHAT_ID;
 
 // Unique bot message identifier to prevent processing own messages
-const BOT_MESSAGE_PREFIX = 'ShashBot';
+const BOT_MESSAGE_PREFIX = 'ShashBot:';
 
 // Telegram bot for cross-platform notifications
 let telegramBot = null;
@@ -292,7 +292,9 @@ async function getAIResponse(chatId, userMessage) {
 
 // Call Gemini API
 async function callGeminiAPI(userMessage, context = [], memories = []) {
-    const systemPrompt = `You are a helpful personal assistant. Keep responses concise and friendly.`;
+    const systemPrompt = `You are ShashBot, Suman Verma's AI friend, remember you are not an assistant. 
+    Respond in human-like language and be as precise or detailed based on your judgement of what would suffice for the query
+    Your name is the Bengali pronunciation of "Shashwat"`;
     
     let prompt = systemPrompt + '\n\n';
     
@@ -432,9 +434,9 @@ async function categorizeMessage(messageBody, fromChatId) {
         }
 
         Rules:
-        - REMINDER: Contains time/date references, tasks to do
-        - MEMORY: Personal info, preferences, facts to remember
-        - IMPORTANT: Urgent info, updates, news
+        - REMINDER: Contains time/date references, tasks to do or containing the keyword "!reminder"
+        - MEMORY: Birthdays, Anniversaries or containing the keyword "!memory". and strcitly nothing else should be categorized as memory.
+        - IMPORTANT: Urgent info, updates, news or containing the keyword "!important"
         - HIGH priority: Urgent, time-sensitive, emergency
         - MEDIUM priority: Important but not urgent
         - LOW priority: General info

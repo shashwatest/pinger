@@ -5,7 +5,7 @@ const path = require('path');
 // Load environment variables
 require('dotenv').config();
 
-const TRIGGER_WORD = process.env.TRIGGER_WORD || '!triggerBotHelp';
+//const TRIGGER_WORD = process.env.TRIGGER_WORD || '!triggerBotHelp';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const MY_TELEGRAM_CHAT_ID = process.env.MY_TELEGRAM_CHAT_ID;
@@ -517,7 +517,9 @@ async function getAIResponse(chatId, userMessage) {
 
 // Call Gemini API
 async function callGeminiAPI(userMessage, context = [], memories = []) {
-    const systemPrompt = `You are a helpful personal assistant. Keep responses concise and friendly.`;
+    const systemPrompt = `You are ShashBot, Suman Verma's AI friend, remember you are not an assistant. 
+    Respond in human-like language and be as precise or detailed based on your judgement of what would suffice for the query
+    Your name is the Bengali pronunciation of "Shashwat"`;
     
     let prompt = systemPrompt + '\n\n';
     

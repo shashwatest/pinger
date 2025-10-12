@@ -374,22 +374,12 @@ function scheduleMultiStageReminder(reminder) {
     }, totalDelay);
 }
 
-// Send reminder notification to both platforms
+// Send reminder notification to Telegram only
 async function sendReminderNotification(message) {
     try {
-        // Send to Telegram
+        // Send to Telegram only
         if (MY_TELEGRAM_CHAT_ID) {
             await bot.sendMessage(MY_TELEGRAM_CHAT_ID, message);
-        }
-        
-        // Send to WhatsApp if available
-        if (whatsappClient) {
-            try {
-                const myChat = await whatsappClient.getChatById(MY_WHATSAPP_CHAT_ID);
-                await myChat.sendMessage('🤖QBOT_MSG_X7Y9Z2: ' + message);
-            } catch (error) {
-                console.log('WhatsApp not available for notification');
-            }
         }
     } catch (error) {
         console.error('Error sending reminder notification:', error);
@@ -475,19 +465,9 @@ async function sendImmediateNotification(type, content, fromChatId) {
     const message = `${typeEmoji[type]} New ${type.toLowerCase()}: ${content} (from ${fromChatId})`;
     
     try {
-        // Send to Telegram
+        // Send to Telegram only
         if (MY_TELEGRAM_CHAT_ID) {
             await bot.sendMessage(MY_TELEGRAM_CHAT_ID, message);
-        }
-        
-        // Send to WhatsApp if available
-        if (whatsappClient) {
-            try {
-                const myChat = await whatsappClient.getChatById(MY_WHATSAPP_CHAT_ID);
-                await myChat.sendMessage('🤖QBOT_MSG_X7Y9Z2: ' + message);
-            } catch (error) {
-                console.log('WhatsApp not available for notification');
-            }
         }
     } catch (error) {
         console.error('Error sending immediate notification:', error);

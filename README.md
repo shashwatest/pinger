@@ -1,6 +1,6 @@
-# WhatsApp & Telegram Personal Assistant Bot
+# ShashBot - WhatsApp & Telegram Personal Assistant
 
-An intelligent personal assistant that runs locally with AI-powered auto-categorization, cross-platform notifications, and multi-stage reminders on both WhatsApp and Telegram.
+An intelligent personal assistant named ShashBot that runs locally with AI-powered auto-categorization, smart notifications, and multi-stage reminders across WhatsApp and Telegram platforms.
 
 ## Setup
 
@@ -12,8 +12,8 @@ An intelligent personal assistant that runs locally with AI-powered auto-categor
 2. **Get Telegram Bot Token:**
    - Open Telegram and search for `@BotFather`
    - Send `/newbot` and follow instructions
-   - Choose a name (e.g., "My Personal Assistant")
-   - Choose a username ending in "bot" (e.g., "mypersonalassistant_bot")
+   - Choose a name (e.g., "ShashBot")
+   - Choose a username ending in "bot" (e.g., "shashbot_personal_bot")
    - Copy the token you receive
 
 3. Configure your API keys in `.env`:
@@ -41,30 +41,56 @@ An intelligent personal assistant that runs locally with AI-powered auto-categor
 6. For WhatsApp: Scan the QR code with WhatsApp on your phone
 7. For Telegram: Search for your bot username and start a chat
 
+## How It Works
+
+### WhatsApp Bot Behavior
+- **Trigger-Word Only**: Responds ONLY when messages start with `!triggerBotHelp`
+- **Silent Auto-Processing**: Automatically categorizes ALL messages but sends notifications only to Telegram
+- **Manual Commands**: Full command support when using trigger word
+
+### Telegram Bot Behavior  
+- **No Trigger Word**: Processes all messages directly
+- **Notification Hub**: Receives ALL notifications from both platforms
+- **Full Functionality**: Complete access to all features without trigger words
+
+### Dual Processing System
+1. **Auto-Categorization**: Every message is analyzed by Gemini AI for automatic extraction of reminders, memories, and important updates
+2. **Manual Commands**: Trigger-word commands for explicit actions and conversations
+
 ## Usage
 
-### Trigger-Word Commands
-All manual commands must start with your trigger word (default: `!triggerBotHelp`)
+### WhatsApp Commands (Trigger Word Required)
+All commands must start with `!triggerBotHelp`:
 
-- `!triggerBotHelp how are you?` - Normal conversation
-- `!triggerBotHelp save to memory that I am learning coding`
-- `!triggerBotHelp remind me to call Alex at 5pm`
+- `!triggerBotHelp how are you?` - Chat with ShashBot
+- `!triggerBotHelp save to memory that I prefer tea over coffee`
+- `!triggerBotHelp remind me to call mom at 6pm tomorrow`
 - `!triggerBotHelp show memories` - View saved memories
 - `!triggerBotHelp show reminders` - View active reminders
-- `!triggerBotHelp !dbg status` - Shows bot status
+- `!triggerBotHelp !dbg status` - Bot status and statistics
 
-### Auto-Categorization (No Trigger Word Needed)
-The bot automatically processes ALL messages and categorizes them using AI:
+### Telegram Commands (No Trigger Word)
+Direct commands without any prefix:
+
+- `how are you?` - Chat with ShashBot
+- `save to memory that I work at Google`
+- `remind me about the meeting tomorrow at 10am`
+- `show memories` - View saved memories
+- `show reminders` - View active reminders
+- `status` - Bot status and statistics
+
+### Auto-Categorization (Both Platforms)
+The bot automatically processes ALL messages using AI:
 
 **Automatic Reminders:**
 - "Meeting tomorrow at 3pm" → Auto-creates reminder
-- "Call mom at 6pm" → Auto-creates reminder
-- "Deadline on Friday" → Auto-creates reminder
+- "Call dentist at 2pm on Friday" → Auto-creates reminder
+- "Project deadline next Monday" → Auto-creates reminder
 
 **Automatic Memories:**
-- "I prefer coffee over tea" → Auto-saves to memory
 - "My birthday is March 15th" → Auto-saves to memory
-- "I work at Google" → Auto-saves to memory
+- "I prefer working from home" → Auto-saves to memory
+- "My favorite restaurant is Pizza Palace" → Auto-saves to memory
 
 **Important Updates:**
 - "Flight delayed by 2 hours" → Auto-categorized as important
@@ -73,43 +99,46 @@ The bot automatically processes ALL messages and categorizes them using AI:
 ## Key Features
 
 ### 🤖 AI-Powered Intelligence
-- **Gemini Integration**: Uses Google Gemini AI for natural language processing
-- **Auto-Categorization**: Automatically identifies reminders, memories, and important updates
-- **Smart DateTime Parsing**: Understands "tomorrow at 3pm", "next Friday", "in 2 hours"
+- **Gemini Integration**: Uses Google Gemini 2.5 Flash for natural language processing
+- **Smart Categorization**: Automatically identifies reminders, memories, and important updates
+- **Intelligent DateTime Parsing**: Understands "tomorrow at 3pm", "next Friday", "in 2 hours"
 - **Priority Detection**: Automatically assigns HIGH/MEDIUM/LOW priority levels
 
-### ⏰ Multi-Stage Reminders
+### ⏰ Multi-Stage Reminder System
 - **3-Stage Notifications**: 1 hour before, 30 minutes before, and at event time
-- **Cross-Platform Delivery**: All reminders sent to both WhatsApp and Telegram
-- **Natural Language**: "remind me to call Alex tomorrow at 5pm"
-- **Automatic Scheduling**: Auto-created reminders from regular messages
+- **Telegram Delivery**: All reminder notifications sent to Telegram only
+- **Natural Language**: Supports complex datetime expressions
+- **Cross-Platform Creation**: Reminders created on either platform work seamlessly
 
-### 📱 Cross-Platform Sync
-- **Shared Data**: All memories, reminders, and updates sync between platforms
-- **Instant Notifications**: Immediate alerts when new items are created
-- **Real-Time Updates**: Changes reflect instantly across both bots
-
-### 🧠 Memory Management
-- **Persistent Storage**: Remembers personal preferences and information
-- **Auto-Save**: Automatically captures important personal details
-- **Context Awareness**: Uses saved memories in conversations
-
-### 🔔 Notification System
-- **Immediate Alerts**: Instant notifications for all new items
+### 📱 Smart Notification System
+- **Telegram-Centric**: All auto-generated notifications go to Telegram only
+- **WhatsApp Silence**: WhatsApp stays quiet unless trigger word is used
+- **Immediate Alerts**: Instant notifications when new items are detected
 - **Priority-Based**: High priority items get special attention
-- **Cross-Platform**: Notifications sent to both WhatsApp and Telegram simultaneously
+
+### 🧠 Unified Memory System
+- **Cross-Platform Sync**: Memories shared between WhatsApp and Telegram
+- **Auto-Detection**: Automatically captures personal information
+- **Context Awareness**: Uses saved memories in conversations
+- **Manual Management**: Add, view, and delete memories explicitly
+
+### 📊 Advanced Features
+- **Daily Summary**: Automatic summary at 9 PM with today's reminders and updates
+- **Real-Time Sync**: Changes reflect instantly across both platforms
+- **Robust Error Handling**: Graceful fallbacks when AI services are unavailable
+- **Debug Tools**: Comprehensive status and logging for troubleshooting
 
 ## Data Structure
 
-### Reminders Format
+### Enhanced Reminder Format
 ```json
 {
   "id": 1758407706387,
   "task": "cleaned task description",
-  "createdAt": "2025-09-20T22:35:06.387Z",
+  "createdAt": "2025-01-21T10:30:00.000Z",
   "originalDateTime": "original user text",
-  "targetDateTime": "2025-09-21T23:59:59Z",
-  "chatId": "source platform",
+  "targetDateTime": "2025-01-22T15:00:00.000Z",
+  "chatId": "source platform identifier",
   "active": true,
   "priority": "HIGH|MEDIUM|LOW",
   "autoCreated": true
@@ -118,41 +147,44 @@ The bot automatically processes ALL messages and categorizes them using AI:
 
 ## Files Created
 - `saved_memories.json` - Shared memories from both platforms
-- `reminders.json` - Shared reminders with enhanced metadata
+- `reminders.json` - Enhanced reminders with full metadata
 - `important_updates.json` - Auto-categorized important information
 - `chat_history.json` - Conversation history for context
 - `mem_media/` - Downloaded media from memories (WhatsApp only)
 
-## Advanced Features
-
-### Daily Summary
-- Automatic daily summary at 9 PM
-- Shows today's reminders, unread updates, and new memories
-
-### Debug Commands
-- `!triggerBotHelp !dbg status` - Bot status and statistics
-- Real-time logging for troubleshooting
-
-### Error Handling
-- Graceful fallbacks when AI services are unavailable
-- Robust JSON parsing with cleanup
-- Cross-platform error recovery
-
-## Technical Details
+## Technical Architecture
 
 ### AI Processing Pipeline
-1. **Message Categorization**: Gemini analyzes all incoming messages
-2. **DateTime Calculation**: AI converts natural language to ISO timestamps
-3. **Priority Assignment**: Automatic urgency detection
-4. **Cross-Platform Sync**: Real-time data synchronization
+1. **Message Analysis**: Gemini analyzes every incoming message
+2. **Smart Categorization**: Identifies type (reminder/memory/important/none)
+3. **DateTime Calculation**: Converts natural language to precise timestamps
+4. **Priority Assignment**: Automatic urgency detection based on content
+5. **Cross-Platform Sync**: Real-time data synchronization
 
 ### Supported DateTime Formats
-- "tomorrow at 3pm"
-- "next Friday at 10am"
-- "in 2 hours"
-- "21st September 2025"
-- "10am" (assumes today/tomorrow)
+- "tomorrow at 3pm" → Next day at 15:00
+- "next Friday at 10am" → Following Friday at 10:00
+- "in 2 hours" → Current time + 2 hours
+- "21st September 2025" → Specific date
+- "10am" → Today or tomorrow at 10:00 (smart detection)
 
-### Bot Message Identification
-- Uses unique prefix `🤖QBOT_MSG_X7Y9Z2:` to prevent processing own messages
-- Prevents infinite loops and duplicate processing
+### Bot Identification System
+- **WhatsApp**: Uses `ShashBot:` prefix to prevent processing own messages
+- **Telegram**: Built-in message filtering prevents infinite loops
+- **Cross-Platform**: Unique identifiers prevent duplicate processing
+
+## Personality & Behavior
+
+ShashBot is designed as Suman Verma's AI friend with these characteristics:
+- **Name Origin**: Bengali pronunciation of "Shashwat" (eternal)
+- **Personality**: Friendly, human-like responses rather than formal assistant tone
+- **Adaptability**: Adjusts response detail based on query complexity
+- **Memory Integration**: Uses personal memories to provide contextual responses
+
+## Error Handling & Reliability
+
+- **Graceful Degradation**: Works even when AI services are temporarily unavailable
+- **JSON Validation**: Robust parsing with automatic cleanup
+- **Cross-Platform Recovery**: Independent operation if one platform fails
+- **Data Persistence**: Automatic saving and loading of all data
+- **Logging**: Comprehensive debug information for troubleshooting

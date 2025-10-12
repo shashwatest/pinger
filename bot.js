@@ -96,7 +96,7 @@ function setupDailySummary() {
 // Send daily summary
 async function sendDailySummary() {
     const today = new Date().toDateString();
-    const todayReminders = reminders.filter(r => r.active && new Date(r.datetime).toDateString() === today);
+    const todayReminders = reminders.filter(r => r.active && r.targetDateTime && new Date(r.targetDateTime).toDateString() === today);
     const unreadUpdates = importantUpdates.filter(u => !u.read);
     const recentMemories = memories.filter(m => new Date(m.timestamp).toDateString() === today);
     
@@ -377,13 +377,10 @@ function scheduleMultiStageReminder(reminder) {
     }, totalDelay);
 }
 
-// Send reminder notification to both platforms
+// Send reminder notification to Telegram only
 async function sendReminderNotification(message) {
     try {
-        // Send to WhatsApp
-        await sendToMyChat(message);
-        
-        // Send to Telegram
+        // Send to Telegram only
         if (telegramBot && MY_TELEGRAM_CHAT_ID) {
             await telegramBot.sendMessage(MY_TELEGRAM_CHAT_ID, message);
         }
@@ -403,10 +400,7 @@ async function sendImmediateNotification(type, content, fromChatId) {
     const message = `${typeEmoji[type]} New ${type.toLowerCase()}: ${content} (from ${fromChatId})`;
     
     try {
-        // Send to WhatsApp
-        await sendToMyChat(message);
-        
-        // Send to Telegram
+        // Send to Telegram only
         if (telegramBot && MY_TELEGRAM_CHAT_ID) {
             await telegramBot.sendMessage(MY_TELEGRAM_CHAT_ID, message);
         }

@@ -62,22 +62,42 @@ An intelligent personal assistant named ShashBot that runs locally with AI-power
 ### WhatsApp Commands (Trigger Word Required)
 All commands must start with `!triggerBotHelp`:
 
+**Basic Commands:**
 - `!triggerBotHelp how are you?` - Chat with ShashBot
 - `!triggerBotHelp save to memory that I prefer tea over coffee`
 - `!triggerBotHelp remind me to call mom at 6pm tomorrow`
 - `!triggerBotHelp show memories` - View saved memories
 - `!triggerBotHelp show reminders` - View active reminders
+- `!triggerBotHelp show updates` - View important updates
 - `!triggerBotHelp !dbg status` - Bot status and statistics
+
+**Contact Management:**
+- `!triggerBotHelp block 9876543210 spam messages` - Block contact by phone
+- `!triggerBotHelp unblock 9876543210` - Unblock contact
+- `!triggerBotHelp add priority 9876543210 Vipul bhaiya,urgent` - Add priority contact with keywords
+- `!triggerBotHelp remove priority 9876543210` - Remove priority contact
+- `!triggerBotHelp show blocked` - View blocked contacts
+- `!triggerBotHelp show priority` - View priority contacts
 
 ### Telegram Commands (No Trigger Word)
 Direct commands without any prefix:
 
+**Basic Commands:**
 - `how are you?` - Chat with ShashBot
 - `save to memory that I work at Google`
 - `remind me about the meeting tomorrow at 10am`
 - `show memories` - View saved memories
 - `show reminders` - View active reminders
+- `show updates` - View important updates
 - `status` - Bot status and statistics
+
+**Contact Management:**
+- `block 9876543210 annoying` - Block contact by phone
+- `unblock 9876543210` - Unblock contact
+- `add priority 9876543210 Boss urgent,emergency` - Add priority contact with keywords
+- `remove priority 9876543210` - Remove priority contact
+- `show blocked` - View blocked contacts
+- `show priority` - View priority contacts
 
 ### Auto-Categorization (Both Platforms)
 The bot automatically processes ALL messages using AI:
@@ -122,6 +142,13 @@ The bot automatically processes ALL messages using AI:
 - **Context Awareness**: Uses saved memories in conversations
 - **Manual Management**: Add, view, and delete memories explicitly
 
+### 🛡️ Contact Management System
+- **Blocked Contacts**: Completely ignore messages from specific contacts
+- **Priority Contacts**: VIP treatment with enhanced notifications
+- **Keyword Filtering**: Process only messages containing specific words
+- **Phone Number Support**: Easy blocking using phone numbers (auto-converts to chat IDs)
+- **Cross-Platform**: Contact rules work across WhatsApp and Telegram
+
 ### 📊 Advanced Features
 - **Daily Summary**: Automatic summary at 9 PM with today's reminders and updates
 - **Real-Time Sync**: Changes reflect instantly across both platforms
@@ -145,21 +172,64 @@ The bot automatically processes ALL messages using AI:
 }
 ```
 
+## Contact Management
+
+### Priority Contact Rules
+
+**Rule Types:**
+- `ONLY_KEYWORDS` - Process only messages containing specific keywords
+- `IGNORE_KEYWORDS` - Skip messages with specific keywords
+- `AUTO_CATEGORIZE` - Force messages into specific categories
+- `NOTIFICATION_ONLY` - Send notifications but skip auto-processing
+
+**Priority Levels:**
+- `HIGH` - Immediate notifications, elevated processing
+- `MEDIUM` - Normal processing (default)
+- `LOW` - Lower priority processing
+
+### Examples
+
+**Block Spam Contact:**
+```
+!triggerBotHelp block 9876543210 sends spam
+```
+
+**Add VIP with Keyword Filter:**
+```
+!triggerBotHelp add priority 9876543210 Boss urgent,emergency
+```
+Only processes messages from Boss containing "urgent" OR "emergency"
+
+**Add Family Member (All Messages):**
+```
+!triggerBotHelp add priority 9123456789 Mom
+```
+Processes ALL messages from Mom with HIGH priority
+
+### Phone Number Auto-Conversion
+- `9876543210` → `919876543210@c.us` (adds +91 for Indian numbers)
+- `919876543210` → `919876543210@c.us` (adds WhatsApp suffix)
+- `telegram_123456789` → `telegram_123456789` (keeps Telegram format)
+
 ## Files Created
 - `saved_memories.json` - Shared memories from both platforms
 - `reminders.json` - Enhanced reminders with full metadata
 - `important_updates.json` - Auto-categorized important information
 - `chat_history.json` - Conversation history for context
+- `blocked_contacts.json` - List of blocked contacts with reasons
+- `priority_contacts.json` - Priority contacts with custom rules
 - `mem_media/` - Downloaded media from memories (WhatsApp only)
 
 ## Technical Architecture
 
 ### AI Processing Pipeline
-1. **Message Analysis**: Gemini analyzes every incoming message
-2. **Smart Categorization**: Identifies type (reminder/memory/important/none)
-3. **DateTime Calculation**: Converts natural language to precise timestamps
-4. **Priority Assignment**: Automatic urgency detection based on content
-5. **Cross-Platform Sync**: Real-time data synchronization
+1. **Contact Filtering**: Check if contact should be processed (blocked/priority rules)
+2. **Rule Application**: Apply contact-specific processing rules
+3. **Message Analysis**: Gemini analyzes qualifying messages
+4. **Smart Categorization**: Identifies type (reminder/memory/important/none)
+5. **DateTime Calculation**: Converts natural language to precise timestamps
+6. **Priority Assignment**: Automatic urgency detection + contact priority
+7. **Cross-Platform Sync**: Real-time data synchronization
 
 ### Supported DateTime Formats
 - "tomorrow at 3pm" → Next day at 15:00
@@ -172,6 +242,7 @@ The bot automatically processes ALL messages using AI:
 - **WhatsApp**: Uses `ShashBot:` prefix to prevent processing own messages
 - **Telegram**: Built-in message filtering prevents infinite loops
 - **Cross-Platform**: Unique identifiers prevent duplicate processing
+- **Contact Management**: Shared contact lists work across both platforms
 
 ## Personality & Behavior
 
@@ -181,10 +252,18 @@ ShashBot is designed as Suman Verma's AI friend with these characteristics:
 - **Adaptability**: Adjusts response detail based on query complexity
 - **Memory Integration**: Uses personal memories to provide contextual responses
 
+## Privacy & Security
+
+- **Local Processing**: All data stored locally, no cloud dependencies
+- **Contact Privacy**: Blocked/priority contact lists excluded from git
+- **Secure Storage**: Personal information protected in local JSON files
+- **No Data Sharing**: Messages and contacts never leave your device
+
 ## Error Handling & Reliability
 
 - **Graceful Degradation**: Works even when AI services are temporarily unavailable
 - **JSON Validation**: Robust parsing with automatic cleanup
 - **Cross-Platform Recovery**: Independent operation if one platform fails
 - **Data Persistence**: Automatic saving and loading of all data
+- **Contact Validation**: Phone number auto-conversion with error handling
 - **Logging**: Comprehensive debug information for troubleshooting

@@ -6,5 +6,7 @@ saved_memories.json
 reminders.json
 important_updates.json
 chat_history.json
+blocked_contacts.json
+priority_contacts.json
 mem_media/
 *.log

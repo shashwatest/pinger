@@ -1,11 +1,9 @@
 const TelegramBot = require('node-telegram-bot-api');
-const fs = require('fs');
-const path = require('path');
+const sharedUtils = require('./shared-utils');
 
 // Load environment variables
 require('dotenv').config();
 
-//const TRIGGER_WORD = process.env.TRIGGER_WORD || '!triggerBotHelp';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const MY_TELEGRAM_CHAT_ID = process.env.MY_TELEGRAM_CHAT_ID;
@@ -27,44 +25,13 @@ if (!TELEGRAM_BOT_TOKEN) {
     process.exit(1);
 }
 
-// Shared data storage (same files as WhatsApp bot)
-let memories = [];
-let reminders = [];
-let chatHistory = {};
+// Local state
 let saveNextMode = {};
-let importantUpdates = [];
 
 // Initialize bot
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 
-// Load shared data
-function loadData() {
-    try {
-        if (fs.existsSync('saved_memories.json')) {
-            memories = JSON.parse(fs.readFileSync('saved_memories.json', 'utf8'));
-        }
-        if (fs.existsSync('reminders.json')) {
-            reminders = JSON.parse(fs.readFileSync('reminders.json', 'utf8'));
-            scheduleExistingReminders();
-        }
-        if (fs.existsSync('chat_history.json')) {
-            chatHistory = JSON.parse(fs.readFileSync('chat_history.json', 'utf8'));
-        }
-        if (fs.existsSync('important_updates.json')) {
-            importantUpdates = JSON.parse(fs.readFileSync('important_updates.json', 'utf8'));
-        }
-    } catch (error) {
-        console.log('Error loading data:', error.message);
-    }
-}
 
-// Save shared data
-function saveData() {
-    fs.writeFileSync('saved_memories.json', JSON.stringify(memories, null, 2));
-    fs.writeFileSync('reminders.json', JSON.stringify(reminders, null, 2));
-    fs.writeFileSync('chat_history.json', JSON.stringify(chatHistory, null, 2));
-    fs.writeFileSync('important_updates.json', JSON.stringify(importantUpdates, null, 2));
-}
 
 // Message handler
 bot.on('message', async (msg) => {
@@ -76,16 +43,15 @@ bot.on('message', async (msg) => {
     
     console.log(`Telegram message from ${chatId}: "${messageText}"`);
     
-    // Initialize chat history
-    if (!chatHistory[chatId]) {
-        chatHistory[chatId] = [];
+    // Check contact processing rules
+    const contactInfo = sharedUtils.shouldProcessContact(`telegram_${chatId}`);
+    if (!contactInfo.process) {
+        console.log(`Ignoring message from telegram_${chatId}: ${contactInfo.reason}`);
+        return;
     }
     
     // Add message to history
-    chatHistory[chatId].push({ role: 'user', content: messageText, timestamp: Date.now() });
-    if (chatHistory[chatId].length > 20) {
-        chatHistory[chatId] = chatHistory[chatId].slice(-20);
-    }
+    sharedUtils.addToHistory(chatId, 'user', messageText);
     
     // No trigger word needed for Telegram - process all messages
     console.log(`Processing Telegram command: ${messageText}`);
@@ -108,11 +74,18 @@ bot.on('message', async (msg) => {
         
         // Debug command
         if (command === '!dbg status' || command === 'status') {
+            const memories = sharedUtils.getMemories();
+            const reminders = sharedUtils.getReminders();
+            const importantUpdates = sharedUtils.getImportantUpdates();
+            const chatHistory = sharedUtils.getChatHistory();
+            const contacts = sharedUtils.getContactLists();
             const activeRemindersCount = reminders.filter(r => r.active).length;
             const status = `📊 Bot Status:
 • Memories: ${memories.length}
 • Active reminders: ${activeRemindersCount}
 • Important updates: ${importantUpdates.length}
+• Blocked contacts: ${contacts.blocked.length}
+• Priority contacts: ${contacts.priority.length}
 • Chat history: ${chatHistory[chatId]?.length || 0} messages`;
             await bot.sendMessage(chatId, status);
             return;
@@ -120,18 +93,8 @@ bot.on('message', async (msg) => {
         
         // Show memories command (specific phrases only)
         if (command === 'show memories' || command === 'list memories' || command === 'my memories' || command.includes('what have I asked you to remember')) {
-            // Reload memories from file to get latest data
-            try {
-                if (fs.existsSync('saved_memories.json')) {
-                    const fileContent = fs.readFileSync('saved_memories.json', 'utf8');
-                    if (fileContent.trim()) {
-                        memories = JSON.parse(fileContent);
-                    }
-                }
-            } catch (error) {
-                console.error('Error loading memories:', error.message);
-                memories = [];
-            }
+            sharedUtils.reloadMemories();
+            const memories = sharedUtils.getMemories();
             if (memories.length === 0) {
                 await bot.sendMessage(chatId, '📝 No memories saved yet.');
                 return;
@@ -147,18 +110,8 @@ bot.on('message', async (msg) => {
         
         // Show reminders command (specific phrases only)
         if (command === 'show reminders' || command === 'list reminders' || command === 'my reminders') {
-            // Reload reminders from file to get latest data
-            try {
-                if (fs.existsSync('reminders.json')) {
-                    const fileContent = fs.readFileSync('reminders.json', 'utf8');
-                    if (fileContent.trim()) {
-                        reminders = JSON.parse(fileContent);
-                    }
-                }
-            } catch (error) {
-                console.error('Error loading reminders:', error.message);
-                reminders = [];
-            }
+            sharedUtils.reloadReminders();
+            const reminders = sharedUtils.getReminders();
             const activeReminders = reminders.filter(r => r.active);
             if (activeReminders.length === 0) {
                 await bot.sendMessage(chatId, '⏰ No active reminders.');
@@ -174,57 +127,69 @@ bot.on('message', async (msg) => {
             return;
         }
         
+        // Show updates command
+        if (command === 'show updates' || command === 'list updates' || command === 'my updates' || command.includes('important updates')) {
+            const importantUpdates = sharedUtils.getImportantUpdates();
+            if (importantUpdates.length === 0) {
+                await bot.sendMessage(chatId, '📰 No important updates.');
+                return;
+            }
+            const updateList = importantUpdates.map((u, i) => {
+                const priority = u.priority === 'HIGH' ? '🚨' : u.priority === 'MEDIUM' ? '🟡' : '🟢';
+                return `${i + 1}. ${priority} ${u.content} (${u.timestamp})`;
+            }).join('\n');
+            await bot.sendMessage(chatId, `📰 Important updates:\n${updateList}\n\nTo clear: "delete all updates"`);
+            importantUpdates.forEach(u => u.read = true);
+            sharedUtils.saveData();
+            return;
+        }
+        
+        // Delete all commands
+        if (command.includes('delete all memories') || command.includes('clear all memories')) {
+            const count = sharedUtils.clearAllMemories();
+            if (count === 0) {
+                await bot.sendMessage(chatId, '📝 No memories to delete.');
+                return;
+            }
+            await bot.sendMessage(chatId, `✅ Deleted all ${count} memories.`);
+            return;
+        }
+        
+        if (command.includes('delete all reminders') || command.includes('clear all reminders') || command.includes('cancel all reminders')) {
+            const activeCount = sharedUtils.clearAllReminders();
+            if (activeCount === 0) {
+                await bot.sendMessage(chatId, '⏰ No active reminders to delete.');
+                return;
+            }
+            await bot.sendMessage(chatId, `✅ Cancelled all ${activeCount} reminders.`);
+            return;
+        }
+        
+        if (command.includes('delete all updates') || command.includes('clear all updates')) {
+            const count = sharedUtils.clearAllUpdates();
+            if (count === 0) {
+                await bot.sendMessage(chatId, '📰 No updates to delete.');
+                return;
+            }
+            await bot.sendMessage(chatId, `✅ Deleted all ${count} updates.`);
+            return;
+        }
+        
         // Cancel reminder command (check first)
         if (command.includes('cancel reminder') || command.includes('delete reminder')) {
-            const match = command.match(/(?:cancel|delete)\s+reminder\s+(\d+)/i);
-            if (!match) {
-                await bot.sendMessage(chatId, '❌ Use: "cancel reminder 1" (number from reminder list)');
-                return;
-            }
-            
-            const reminderIndex = parseInt(match[1]) - 1;
-            const activeReminders = reminders.filter(r => r.active);
-            
-            if (reminderIndex < 0 || reminderIndex >= activeReminders.length) {
-                await bot.sendMessage(chatId, '❌ Invalid reminder number. Check "show reminders" first.');
-                return;
-            }
-            
-            // Find and deactivate the actual reminder in the main array
-            const targetReminder = activeReminders[reminderIndex];
-            const mainIndex = reminders.findIndex(r => r.id === targetReminder.id);
-            if (mainIndex !== -1) {
-                reminders[mainIndex].active = false;
-            }
-            saveData();
-            await bot.sendMessage(chatId, `✅ Cancelled reminder: ${targetReminder.task}`);
+            await sharedUtils.handleCancelReminder(command, (msg) => bot.sendMessage(chatId, msg));
             return;
         }
         
         // Delete memory command
         if (command.includes('delete memory') || command.includes('remove memory')) {
-            const match = command.match(/(?:delete|remove)\s+memory\s+(\d+)/i);
-            if (!match) {
-                await bot.sendMessage(chatId, '❌ Use: "delete memory 1" (number from memory list)');
-                return;
-            }
-            
-            const memoryIndex = parseInt(match[1]) - 1;
-            
-            if (memoryIndex < 0 || memoryIndex >= memories.length) {
-                await bot.sendMessage(chatId, '❌ Invalid memory number. Check "show memories" first.');
-                return;
-            }
-            
-            const deletedMemory = memories.splice(memoryIndex, 1)[0];
-            saveData();
-            await bot.sendMessage(chatId, `✅ Deleted memory: ${deletedMemory.content}`);
+            await sharedUtils.handleDeleteMemory(command, (msg) => bot.sendMessage(chatId, msg));
             return;
         }
         
         // Save memory commands
         if (command.includes('save') && command.includes('memory')) {
-            await saveMemoryFromCommand(chatId, command);
+            await sharedUtils.handleSaveMemory(command, `telegram_${chatId}`, (msg) => bot.sendMessage(chatId, msg), bot, MY_TELEGRAM_CHAT_ID);
             return;
         }
         
@@ -234,18 +199,42 @@ bot.on('message', async (msg) => {
             return;
         }
         
-        // Reminder command
-        if (command.includes('remind')) {
-            await setReminder(chatId, command);
+        // Check for direct commands first
+        if (command.startsWith('block ')) {
+            await handleDirectBlock(chatId, command);
             return;
         }
         
-        // Regular chat - get AI response
-        const response = await getAIResponse(chatId, command);
-        await bot.sendMessage(chatId, response);
+        if (command.startsWith('unblock ')) {
+            await handleDirectUnblock(chatId, command);
+            return;
+        }
         
-        // Add bot response to history
-        chatHistory[chatId].push({ role: 'assistant', content: response, timestamp: Date.now() });
+        if (command.startsWith('add priority ')) {
+            await handleDirectAddPriority(chatId, command);
+            return;
+        }
+        
+        if (command.startsWith('remove priority ')) {
+            await handleDirectRemovePriority(chatId, command);
+            return;
+        }
+        
+        // Try AI command interpretation first
+        const interpretedAction = await sharedUtils.interpretCommand(command, GEMINI_API_KEY);
+        
+        if (interpretedAction) {
+            await executeAction(chatId, interpretedAction, command);
+        } else if (command.includes('remind')) {
+            await sharedUtils.createReminder(command, `telegram_${chatId}`, GEMINI_API_KEY, sendReminderNotification, (msg) => bot.sendMessage(chatId, msg), bot, MY_TELEGRAM_CHAT_ID);
+        } else {
+            // Regular chat - get AI response
+            const response = await sharedUtils.getAIResponse(chatId, command, GEMINI_API_KEY);
+            await bot.sendMessage(chatId, response);
+            
+            // Add bot response to history
+            sharedUtils.addToHistory(chatId, 'assistant', response);
+        }
         
     } catch (error) {
         console.error('Error processing Telegram message:', error);
@@ -253,28 +242,7 @@ bot.on('message', async (msg) => {
     }
 });
 
-// Save memory from command
-async function saveMemoryFromCommand(chatId, command) {
-    const contentToSave = command.replace(/save.*?memory.*?that/i, '').replace(/save.*?to.*?memory/i, '').trim();
-    
-    if (!contentToSave) {
-        await bot.sendMessage(chatId, '❌ Nothing to save. Use: save to memory that [your text]');
-        return;
-    }
-    
-    const memory = {
-        content: contentToSave,
-        timestamp: new Date().toLocaleString(),
-        chatId: `telegram_${chatId}`
-    };
-    
-    memories.push(memory);
-    saveData();
-    await bot.sendMessage(chatId, '✅ Saved to memory: ' + contentToSave);
-    
-    // Send immediate notification
-    await sendImmediateNotification('MEMORY', contentToSave, `telegram_${chatId}`);
-}
+
 
 // Save memory (for save next mode)
 async function saveMemory(chatId, messageText) {
@@ -284,95 +252,16 @@ async function saveMemory(chatId, messageText) {
         chatId: `telegram_${chatId}`
     };
     
-    memories.push(memory);
-    saveData();
+    sharedUtils.addMemory(memory);
     await bot.sendMessage(chatId, '✅ Saved to memory: ' + messageText);
     
     // Send immediate notification
-    await sendImmediateNotification('MEMORY', messageText, `telegram_${chatId}`);
+    await sharedUtils.sendImmediateNotification('MEMORY', messageText, `telegram_${chatId}`, bot, MY_TELEGRAM_CHAT_ID);
 }
 
-// Set reminder
-async function setReminder(chatId, command) {
-    const reminder = {
-        id: Date.now(),
-        task: command.replace(/remind me (to |about |of )?/i, '').trim(),
-        createdAt: new Date().toISOString(),
-        originalDateTime: command,
-        targetDateTime: null,
-        chatId: `telegram_${chatId}`,
-        active: true,
-        autoCreated: false
-    };
-    
-    // Calculate target datetime using Gemini
-    const calculatedReminder = await calculateTargetDateTime(reminder);
-    
-    reminders.push(calculatedReminder);
-    saveData();
-    
-    if (calculatedReminder.targetDateTime) {
-        scheduleMultiStageReminder(calculatedReminder);
-        const targetDate = new Date(calculatedReminder.targetDateTime);
-        await bot.sendMessage(chatId, `🕒 Reminder set for ${targetDate.toLocaleString()}: "${calculatedReminder.task}"`);
-    } else {
-        await bot.sendMessage(chatId, `❌ Could not parse date/time from: "${command}"`);
-        return;
-    }
-    
-    // Send immediate notification
-    await sendImmediateNotification('REMINDER', calculatedReminder.task, `telegram_${chatId}`);
-}
 
-// Schedule multi-stage reminder notifications
-function scheduleMultiStageReminder(reminder) {
-    const targetDate = new Date(reminder.targetDateTime);
-    const now = new Date();
-    
-    if (targetDate <= now) {
-        console.error('Reminder time is in the past:', reminder.targetDateTime);
-        return;
-    }
-    
-    const totalDelay = targetDate.getTime() - now.getTime();
-    const oneHour = 60 * 60 * 1000;
-    const thirtyMinutes = 30 * 60 * 1000;
-    
-    // Schedule 1 hour before notification
-    if (totalDelay > oneHour) {
-        setTimeout(async () => {
-            if (reminder.active) {
-                await sendReminderNotification(`⏰ 1 hour reminder: ${reminder.task}`);
-            }
-        }, totalDelay - oneHour);
-    }
-    
-    // Schedule 30 minutes before notification
-    if (totalDelay > thirtyMinutes) {
-        setTimeout(async () => {
-            if (reminder.active) {
-                await sendReminderNotification(`⏰ 30 minutes reminder: ${reminder.task}`);
-            }
-        }, totalDelay - thirtyMinutes);
-    }
-    
-    // Schedule main reminder notification
-    setTimeout(async () => {
-        if (reminder.active) {
-            try {
-                await sendReminderNotification(`🔔 Reminder NOW: ${reminder.task}`);
-                
-                const index = reminders.findIndex(r => r.id === reminder.id);
-                if (index !== -1) {
-                    reminders.splice(index, 1);
-                }
-                saveData();
-            } catch (error) {
-                console.error('Error sending Telegram reminder:', error);
-            }
-        }
-    }, totalDelay);
-}
+
+
 
 // Send reminder notification to Telegram only
 async function sendReminderNotification(message) {
@@ -386,155 +275,175 @@ async function sendReminderNotification(message) {
     }
 }
 
-// Calculate target datetime using Gemini AI
-async function calculateTargetDateTime(reminder) {
-    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your_gemini_api_key_here') {
-        console.log('Gemini API key not configured, skipping datetime calculation');
-        return reminder;
-    }
-    
-    const prompt = `Calculate target datetime and extract clean task. Return JSON format:
 
-{
-  "task": "cleaned task description",
-  "targetDateTime": "ISO datetime string or null",
-  "priority": "HIGH|MEDIUM|LOW"
-}
 
-Rules:
-- Current time: ${new Date().toISOString()}
-- Extract clean task from original text, removing time references
-- Calculate targetDateTime from time references in original text
-- If no valid time found, set targetDateTime to null
-- Priority: HIGH for urgent/soon, MEDIUM for normal, LOW for far future
-- Examples: "tomorrow 3pm" → tomorrow at 15:00, "10am" → today/tomorrow 10:00
 
-Original text: "${reminder.originalDateTime}"
 
-Return only valid JSON:`;
-    
-    try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }]
-            })
-        });
-        
-        if (!response.ok) {
-            console.error('Gemini API error:', response.status);
-            return reminder;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Execute action for Telegram
+async function executeAction(chatId, action, command) {
+    if (['CANCEL_REMINDER', 'DELETE_MEMORY', 'SAVE_MEMORY', 'SET_REMINDER', 'BLOCK_CONTACT', 'UNBLOCK_CONTACT'].includes(action)) {
+        // Handle actions that need special Telegram-specific logic
+        switch (action) {
+            case 'CANCEL_REMINDER':
+                await sharedUtils.handleCancelReminder(command, (msg) => bot.sendMessage(chatId, msg));
+                break;
+            case 'DELETE_MEMORY':
+                await sharedUtils.handleDeleteMemory(command, (msg) => bot.sendMessage(chatId, msg));
+                break;
+            case 'SAVE_MEMORY':
+                await sharedUtils.handleSaveMemory(command, `telegram_${chatId}`, (msg) => bot.sendMessage(chatId, msg), bot, MY_TELEGRAM_CHAT_ID);
+                break;
+            case 'SET_REMINDER':
+                await sharedUtils.createReminder(command, `telegram_${chatId}`, GEMINI_API_KEY, sendReminderNotification, (msg) => bot.sendMessage(chatId, msg), bot, MY_TELEGRAM_CHAT_ID);
+                break;
+            case 'BLOCK_CONTACT':
+                await handleBlockContact(chatId, command);
+                break;
+            case 'UNBLOCK_CONTACT':
+                await handleUnblockContact(chatId, command);
+                break;
         }
-        
-        const data = await response.json();
-        let rawResult = data.candidates[0].content.parts[0].text.trim();
-        
-        // Remove markdown code blocks if present
-        if (rawResult.startsWith('```json')) {
-            rawResult = rawResult.replace(/```json\s*/, '').replace(/\s*```$/, '');
-        }
-        
-        const geminiResult = JSON.parse(rawResult);
-        console.log('Gemini result:', geminiResult);
-        
-        // Preserve original reminder data and only update calculated fields
-        const calculatedReminder = {
-            ...reminder,
-            task: geminiResult.task || reminder.task,
-            targetDateTime: geminiResult.targetDateTime,
-            priority: geminiResult.priority || 'MEDIUM'
-        };
-        
-        console.log('Final calculated reminder:', calculatedReminder);
-        return calculatedReminder;
-    } catch (error) {
-        console.error('Error calculating target datetime:', error);
-        return reminder;
-    }
-}
-
-// Send immediate notification for new items
-async function sendImmediateNotification(type, content, fromChatId) {
-    const typeEmoji = {
-        'REMINDER': '⏰',
-        'MEMORY': '📝', 
-        'IMPORTANT': '📰'
-    };
-    
-    const message = `${typeEmoji[type]} New ${type.toLowerCase()}: ${content} (from ${fromChatId})`;
-    
-    try {
-        // Send to Telegram only
-        if (MY_TELEGRAM_CHAT_ID) {
-            await bot.sendMessage(MY_TELEGRAM_CHAT_ID, message);
-        }
-    } catch (error) {
-        console.error('Error sending immediate notification:', error);
-    }
-}
-
-// Schedule existing reminders on startup
-function scheduleExistingReminders() {
-    reminders.forEach(reminder => {
-        if (reminder.active && reminder.targetDateTime) {
-            scheduleMultiStageReminder(reminder);
-        }
-    });
-}
-
-// Get AI response
-async function getAIResponse(chatId, userMessage) {
-    const context = chatHistory[chatId] || [];
-    const relevantMemories = memories.slice(-5);
-    
-    if (GEMINI_API_KEY && GEMINI_API_KEY !== 'your_gemini_api_key_here') {
-        return await callGeminiAPI(userMessage, context, relevantMemories);
     } else {
-        return `Hello! I received: "${userMessage}". Please configure GEMINI_API_KEY in .env for AI responses.`;
+        // Use shared execution for display actions
+        await sharedUtils.executeAction(action, command, (msg) => bot.sendMessage(chatId, msg));
     }
 }
 
-// Call Gemini API
-async function callGeminiAPI(userMessage, context = [], memories = []) {
-    const systemPrompt = `You are ShashBot, Suman Verma's AI friend, remember you are not an assistant. 
-    Respond in human-like language and be as precise or detailed based on your judgement of what would suffice for the query
-    Your name is the Bengali pronunciation of "Shashwat"`;
-    
-    let prompt = systemPrompt + '\n\n';
-    
-    if (memories.length > 0) {
-        prompt += 'Relevant memories:\n' + memories.map(m => `- ${m.content}`).join('\n') + '\n\n';
+// Handle block contact
+async function handleBlockContact(chatId, command) {
+    const match = command.match(/block\s+contact\s+(.+)/i);
+    if (!match) {
+        await bot.sendMessage(chatId, '❌ Use: "block contact [chat_id] [reason]"');
+        return;
     }
     
-    if (context.length > 0) {
-        prompt += 'Recent conversation:\n' + context.slice(-10).map(msg => `${msg.role}: ${msg.content}`).join('\n') + '\n\n';
+    const parts = match[1].split(' ');
+    const targetChatId = parts[0];
+    const reason = parts.slice(1).join(' ') || 'Manual block';
+    
+    sharedUtils.addBlockedContact(targetChatId, reason);
+    await bot.sendMessage(chatId, `✅ Blocked contact: ${targetChatId}`);
+}
+
+// Handle unblock contact
+async function handleUnblockContact(chatId, command) {
+    const match = command.match(/unblock\s+contact\s+(.+)/i);
+    if (!match) {
+        await bot.sendMessage(chatId, '❌ Use: "unblock contact [chat_id]"');
+        return;
     }
     
-    prompt += `User: ${userMessage}\nAssistant:`;
+    const targetChatId = match[1].trim();
+    const removed = sharedUtils.removeBlockedContact(targetChatId);
     
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }]
-        })
-    });
-    
-    if (!response.ok) {
-        throw new Error(`Gemini API error: ${response.status}`);
+    if (removed) {
+        await bot.sendMessage(chatId, `✅ Unblocked contact: ${targetChatId}`);
+    } else {
+        await bot.sendMessage(chatId, `❌ Contact not found in blocked list: ${targetChatId}`);
+    }
+}
+
+// Direct block command
+async function handleDirectBlock(chatId, command) {
+    const input = command.replace('block ', '').trim();
+    if (!input) {
+        await bot.sendMessage(chatId, '❌ Use: "block [phone_number/chat_id] [reason]"');
+        return;
     }
     
-    const data = await response.json();
-    if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
-        throw new Error('Invalid response from Gemini API');
+    const parts = input.split(' ');
+    const identifier = parts[0];
+    const reason = parts.slice(1).join(' ') || 'Manual block';
+    
+    const targetChatId = sharedUtils.phoneToWhatsAppId(identifier);
+    sharedUtils.addBlockedContact(targetChatId, reason);
+    await bot.sendMessage(chatId, `✅ Blocked: ${identifier} -> ${targetChatId}`);
+}
+
+// Direct unblock command
+async function handleDirectUnblock(chatId, command) {
+    const input = command.replace('unblock ', '').trim();
+    if (!input) {
+        await bot.sendMessage(chatId, '❌ Use: "unblock [phone_number/chat_id]"');
+        return;
     }
-    return data.candidates[0].content.parts[0].text.trim();
+    
+    const targetChatId = sharedUtils.phoneToWhatsAppId(input);
+    const removed = sharedUtils.removeBlockedContact(targetChatId);
+    
+    if (removed) {
+        await bot.sendMessage(chatId, `✅ Unblocked: ${input} -> ${targetChatId}`);
+    } else {
+        await bot.sendMessage(chatId, `❌ Not found in blocked list: ${targetChatId}`);
+    }
+}
+
+// Direct add priority command
+async function handleDirectAddPriority(chatId, command) {
+    const input = command.replace('add priority ', '').trim();
+    const parts = input.split(' ');
+    
+    if (parts.length < 2) {
+        await bot.sendMessage(chatId, '❌ Use: "add priority [phone/chatId] [name] [keywords]"\nExample: "add priority 9876543210 Vipul bhaiya,urgent"');
+        return;
+    }
+    
+    const identifier = parts[0];
+    const name = parts[1];
+    const keywords = parts.slice(2).join(' ').split(',').map(k => k.trim()).filter(k => k);
+    
+    const targetChatId = sharedUtils.phoneToWhatsAppId(identifier);
+    const rules = keywords.length > 0 ? [{ type: 'ONLY_KEYWORDS', keywords }] : [];
+    
+    sharedUtils.addPriorityContact(targetChatId, 'HIGH', rules, name);
+    await bot.sendMessage(chatId, `✅ Added priority contact: ${name} (${targetChatId})\nKeywords: ${keywords.join(', ') || 'All messages'}`);
+}
+
+// Direct remove priority command
+async function handleDirectRemovePriority(chatId, command) {
+    const input = command.replace('remove priority ', '').trim();
+    if (!input) {
+        await bot.sendMessage(chatId, '❌ Use: "remove priority [phone_number/chat_id]"');
+        return;
+    }
+    
+    const targetChatId = sharedUtils.phoneToWhatsAppId(input);
+    const removed = sharedUtils.removePriorityContact(targetChatId);
+    
+    if (removed) {
+        await bot.sendMessage(chatId, `✅ Removed priority contact: ${removed.name || targetChatId}`);
+    } else {
+        await bot.sendMessage(chatId, `❌ Not found in priority list: ${targetChatId}`);
+    }
+}
+
+// Send daily summary
+async function sendDailySummary() {
+    if (!MY_TELEGRAM_CHAT_ID) return;
+    const summary = sharedUtils.generateDailySummary();
+    await bot.sendMessage(MY_TELEGRAM_CHAT_ID, summary);
 }
 
 // Start bot
 console.log('Telegram bot starting...');
-loadData();
+sharedUtils.loadData();
+sharedUtils.scheduleExistingReminders(sendReminderNotification);
+sharedUtils.setupDailySummary(sendDailySummary);
+sharedUtils.setupPeriodicReminderCheck(sendReminderNotification);
 
 bot.on('polling_error', (error) => {
     console.log('Telegram polling error:', error);

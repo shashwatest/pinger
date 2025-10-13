@@ -102,11 +102,13 @@ async function calculateTargetDateTime(reminder, apiKey) {
 
 Rules:
 - Current time: ${new Date().toISOString()}
+- Current local time: ${new Date().toLocaleString()}
 - Extract clean task from original text, removing time references
-- Calculate targetDateTime from time references in original text
+- Calculate targetDateTime in LOCAL timezone (not UTC)
 - If no valid time found, set targetDateTime to null
 - Priority: HIGH for urgent/soon, MEDIUM for normal, LOW for far future
-- Examples: "tomorrow 3pm" → tomorrow at 15:00, "10am" → today/tomorrow 10:00
+- Examples: "tomorrow 3pm" → tomorrow at 15:00 LOCAL TIME, "10am" → today/tomorrow 10:00 LOCAL TIME
+- IMPORTANT: Return datetime in local timezone format, not UTC
 
 Original text: "${reminder.originalDateTime}"
 
@@ -155,15 +157,24 @@ Return only valid JSON:`;
 
 // Schedule multi-stage reminder notifications
 function scheduleMultiStageReminder(reminder, notificationCallback) {
+    // Validate reminder is active
+    if (!reminder.active) {
+        console.log(`Skipping inactive reminder: ${reminder.task}`);
+        return;
+    }
+    
     const targetDate = new Date(reminder.targetDateTime);
     const now = new Date();
     
-    console.log(`Scheduling reminder: ${reminder.task}`);
+    console.log(`Scheduling reminder: ${reminder.task} (ID: ${reminder.id})`);
     console.log(`Target time: ${targetDate.toISOString()}`);
     console.log(`Current time: ${now.toISOString()}`);
     
     if (targetDate <= now) {
         console.error('Reminder time is in the past:', reminder.targetDateTime);
+        // Mark as inactive if in the past
+        reminder.active = false;
+        saveData();
         return;
     }
     
@@ -427,9 +438,15 @@ async function executeAction(action, command, messageSender) {
                 return;
             }
             const reminderList = activeReminders.map((r, i) => {
-                const date = r.targetDateTime ? new Date(r.targetDateTime).toLocaleString() : 'No date';
+                let dateStr = 'No date';
+                if (r.targetDateTime) {
+                    const targetDate = new Date(r.targetDateTime);
+                    const localDate = targetDate.toLocaleDateString();
+                    const localTime = targetDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                    dateStr = `${localDate} at ${localTime}`;
+                }
                 const auto = r.autoCreated ? ' (auto)' : '';
-                return `${i + 1}. ${r.task} - ${date}${auto}`;
+                return `${i + 1}. ${r.task} - ${dateStr}${auto}`;
             });
             await messageSender(`⏰ Your reminders:\n${reminderList.join('\n')}`);
             break;

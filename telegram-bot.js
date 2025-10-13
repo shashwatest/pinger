@@ -441,9 +441,9 @@ async function sendDailySummary() {
 // Start bot
 console.log('Telegram bot starting...');
 sharedUtils.loadData();
-sharedUtils.scheduleExistingReminders(sendReminderNotification);
+sharedUtils.scheduleExistingReminders(sendReminderNotification, (r) => r.chatId.startsWith('telegram_'));
 sharedUtils.setupDailySummary(sendDailySummary);
-sharedUtils.setupPeriodicReminderCheck(sendReminderNotification);
+sharedUtils.setupPeriodicReminderCheck(sendReminderNotification, (r) => r.chatId.startsWith('telegram_'));
 
 bot.on('polling_error', (error) => {
     console.log('Telegram polling error:', error);

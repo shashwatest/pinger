@@ -546,7 +546,7 @@ async function handleSaveMemory(command, chatId, messageSender, notificationBot,
     
     const memory = {
         content: contentToSave,
-        timestamp: new Date().toLocaleString(),
+        timestamp: new Date().toISOString(),
         chatId: chatId,
         priority: 'MEDIUM',
         autoCreated: false
@@ -625,38 +625,76 @@ function setupPeriodicReminderCheck(notificationCallback, filterFn = () => true)
 // Generate daily summary
 function generateDailySummary() {
     const today = new Date().toDateString();
-    const todayReminders = reminders.filter(r => r.active && r.targetDateTime && new Date(r.targetDateTime).toDateString() === today);
-    const unreadUpdates = importantUpdates.filter(u => !u.read);
-    const recentMemories = memories.filter(m => new Date(m.timestamp).toDateString() === today);
+    const now = new Date();
+    const fourDaysFromNow = new Date(now.getTime() + (4 * 24 * 60 * 60 * 1000));
+    
+    // Get items CREATED today
+    const todayReminders = reminders.filter(r => {
+        if (!r.createdAt) return false;
+        return new Date(r.createdAt).toDateString() === today;
+    });
+    
+    // Get reminders DUE within next 4 days
+    const upcomingReminders = reminders.filter(r => {
+        if (!r.active || !r.targetDateTime) return false;
+        const targetDate = new Date(r.targetDateTime);
+        return targetDate >= now && targetDate <= fourDaysFromNow;
+    }).sort((a, b) => new Date(a.targetDateTime) - new Date(b.targetDateTime));
+    
+    const todayUpdates = importantUpdates.filter(u => {
+        if (!u.timestamp) return false;
+        const updateDate = u.timestamp.includes('T') ? new Date(u.timestamp) : new Date(Date.parse(u.timestamp));
+        return updateDate.toDateString() === today;
+    });
+    
+    const todayMemories = memories.filter(m => {
+        if (!m.timestamp) return false;
+        const memoryDate = m.timestamp.includes('T') ? new Date(m.timestamp) : new Date(Date.parse(m.timestamp));
+        return memoryDate.toDateString() === today;
+    });
     
     let summary = `🌆 Daily Summary - ${today}\n\n`;
     
     if (todayReminders.length > 0) {
-        summary += `⏰ Today's Reminders (${todayReminders.length}):\n`;
+        summary += `⏰ New Reminders Created (${todayReminders.length}):\n`;
         todayReminders.forEach((r, i) => {
-            summary += `${i + 1}. ${r.task}\n`;
+            const auto = r.autoCreated ? ' (auto)' : '';
+            summary += `${i + 1}. ${r.task}${auto}\n`;
         });
         summary += '\n';
     }
     
-    if (unreadUpdates.length > 0) {
-        summary += `📰 Unread Updates (${unreadUpdates.length}):\n`;
-        unreadUpdates.slice(0, 5).forEach((u, i) => {
+    if (upcomingReminders.length > 0) {
+        summary += `📅 Upcoming Reminders (Next 4 Days):\n`;
+        upcomingReminders.forEach((r, i) => {
+            const targetDate = new Date(r.targetDateTime);
+            const dateStr = targetDate.toLocaleDateString();
+            const timeStr = targetDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            summary += `${i + 1}. ${r.task} - ${dateStr} at ${timeStr}\n`;
+        });
+        summary += '\n';
+    }
+    
+    if (todayUpdates.length > 0) {
+        summary += `📰 New Updates Created (${todayUpdates.length}):\n`;
+        todayUpdates.slice(0, 5).forEach((u, i) => {
             const priority = u.priority === 'HIGH' ? '🚨' : u.priority === 'MEDIUM' ? '🟡' : '🟢';
             summary += `${i + 1}. ${priority} ${u.content}\n`;
         });
         summary += '\n';
     }
     
-    if (recentMemories.length > 0) {
-        summary += `📝 New Memories (${recentMemories.length}):\n`;
-        recentMemories.forEach((m, i) => {
-            summary += `${i + 1}. ${m.content}\n`;
+    if (todayMemories.length > 0) {
+        summary += `📝 New Memories Created (${todayMemories.length}):\n`;
+        todayMemories.forEach((m, i) => {
+            const auto = m.autoCreated ? ' (auto)' : '';
+            summary += `${i + 1}. ${m.content}${auto}\n`;
         });
+        summary += '\n';
     }
     
-    if (todayReminders.length === 0 && unreadUpdates.length === 0 && recentMemories.length === 0) {
-        summary += 'No new items today. Have a great evening! 🌙';
+    if (todayReminders.length === 0 && upcomingReminders.length === 0 && todayUpdates.length === 0 && todayMemories.length === 0) {
+        summary += 'No new items created today and no upcoming reminders. Have a great evening! 🌙';
     }
     
     return summary;
@@ -708,6 +746,10 @@ function clearAllUpdates() {
 }
 
 function addMemory(memory) {
+    // Ensure timestamp is in ISO format for consistent date filtering
+    if (!memory.timestamp || !memory.timestamp.includes('T')) {
+        memory.timestamp = new Date().toISOString();
+    }
     memories.push(memory);
     saveData();
 }
@@ -718,6 +760,10 @@ function addReminder(reminder) {
 }
 
 function addImportantUpdate(update) {
+    // Ensure timestamp is in ISO format for consistent date filtering
+    if (!update.timestamp || !update.timestamp.includes('T')) {
+        update.timestamp = new Date().toISOString();
+    }
     importantUpdates.push(update);
     saveData();
 }

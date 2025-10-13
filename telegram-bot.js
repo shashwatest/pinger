@@ -248,7 +248,7 @@ bot.on('message', async (msg) => {
 async function saveMemory(chatId, messageText) {
     const memory = {
         content: messageText,
-        timestamp: new Date().toLocaleString(),
+        timestamp: new Date().toISOString(),
         chatId: `telegram_${chatId}`
     };
     

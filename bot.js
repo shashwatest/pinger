@@ -209,10 +209,10 @@ async function processIncomingMessage(message, messageBody, chatId, contactInfo)
             }
             
             // Send immediate notification for high priority or priority contacts
-            if (categorization.priority === 'HIGH' || contactInfo.priority === 'HIGH') {
-                const contactName = contactInfo.name ? ` (${contactInfo.name})` : '';
-                await sendToMyChat(`🚨 High Priority: ${categorization.content} (from ${chatId}${contactName})`);
-            }
+            // if (categorization.priority === 'HIGH' || contactInfo.priority === 'HIGH') {
+            //     const contactName = contactInfo.name ? ` (${contactInfo.name})` : '';
+            //     await sendToMyChat(`🚨 High Priority: ${categorization.content} (from ${chatId}${contactName})`);
+            // }
         } else {
             console.log('Message not categorized (returned null)');
         }
@@ -355,7 +355,7 @@ async function autoCreateReminder(categorization, fromChatId) {
 async function autoSaveMemory(categorization, fromChatId) {
     const memory = {
         content: categorization.content,
-        timestamp: new Date().toLocaleString(),
+        timestamp: new Date().toISOString(),
         chatId: fromChatId,
         priority: categorization.priority,
         autoCreated: true
@@ -372,7 +372,7 @@ async function saveImportantUpdate(categorization, fromChatId) {
     const update = {
         id: Date.now(),
         content: categorization.content,
-        timestamp: new Date().toLocaleString(),
+        timestamp: new Date().toISOString(),
         chatId: fromChatId,
         priority: categorization.priority,
         read: false

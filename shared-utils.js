@@ -1,13 +1,11 @@
 const fs = require('fs');
 const contactManager = require('./contact-manager');
 
-// Shared data storage
 let memories = [];
 let reminders = [];
 let chatHistory = {};
 let importantUpdates = [];
 
-// Load shared data
 function loadData() {
     try {
         if (fs.existsSync('saved_memories.json')) {
@@ -28,7 +26,6 @@ function loadData() {
     }
 }
 
-// Save shared data
 function saveData() {
     fs.writeFileSync('saved_memories.json', JSON.stringify(memories, null, 2));
     fs.writeFileSync('reminders.json', JSON.stringify(reminders, null, 2));
@@ -36,9 +33,8 @@ function saveData() {
     fs.writeFileSync('important_updates.json', JSON.stringify(importantUpdates, null, 2));
 }
 
-// Call Gemini API
 async function callGeminiAPI(userMessage, context = [], memoriesContext = [], apiKey) {
-    const systemPrompt = `You are ShashBot, Suman Verma's AI friend, remember you are not an assistant. 
+    const systemPrompt = `You are ${process.env.MY_BOT_NAME}, Suman Verma's AI friend, remember you are not an assistant. 
     Respond in human-like language and be as precise or detailed based on your judgement of what would suffice for the query
     Your name is the Bengali pronunciation of "Shashwat"`;
     
@@ -73,7 +69,6 @@ async function callGeminiAPI(userMessage, context = [], memoriesContext = [], ap
     return data.candidates[0].content.parts[0].text.trim();
 }
 
-// Get AI response
 async function getAIResponse(chatId, userMessage, apiKey) {
     const context = chatHistory[chatId] || [];
     const relevantMemories = memories.slice(-5);
@@ -85,7 +80,6 @@ async function getAIResponse(chatId, userMessage, apiKey) {
     }
 }
 
-// Calculate target datetime using Gemini AI
 async function calculateTargetDateTime(reminder, apiKey) {
     if (!apiKey || apiKey === 'your_gemini_api_key_here') {
         console.log('Gemini API key not configured, skipping datetime calculation');
@@ -131,7 +125,6 @@ Return only valid JSON:`;
         const data = await response.json();
         let rawResult = data.candidates[0].content.parts[0].text.trim();
         
-        // Clean up the response
         if (rawResult.startsWith('```json')) {
             rawResult = rawResult.replace(/```json\s*/, '').replace(/\s*```$/, '');
         }
@@ -155,9 +148,7 @@ Return only valid JSON:`;
     }
 }
 
-// Schedule multi-stage reminder notifications
 function scheduleMultiStageReminder(reminder, notificationCallback) {
-    // Validate reminder is active
     if (!reminder.active) {
         console.log(`Skipping inactive reminder: ${reminder.task}`);
         return;
@@ -172,7 +163,6 @@ function scheduleMultiStageReminder(reminder, notificationCallback) {
     
     if (targetDate <= now) {
         console.error('Reminder time is in the past:', reminder.targetDateTime);
-        // Mark as inactive if in the past
         reminder.active = false;
         saveData();
         return;
@@ -181,17 +171,15 @@ function scheduleMultiStageReminder(reminder, notificationCallback) {
     const totalDelay = targetDate.getTime() - now.getTime();
     const oneHour = 60 * 60 * 1000;
     const thirtyMinutes = 30 * 60 * 1000;
-    const maxTimeout = 2147483647; // Maximum 32-bit signed integer (setTimeout limit)
+    const maxTimeout = 2147483647;
     
     console.log(`Total delay: ${Math.round(totalDelay / 1000 / 60)} minutes`);
     
-    // Check if reminder is too far in the future for setTimeout
     if (totalDelay > maxTimeout) {
         console.log(`Reminder too far in future (${Math.round(totalDelay / 1000 / 60 / 60 / 24)} days), will be rescheduled on next startup`);
         return;
     }
     
-    // Schedule 1 hour before notification (only if more than 1 hour away)
     if (totalDelay > oneHour) {
         const oneHourBeforeTime = targetDate.getTime() - oneHour;
         const oneHourDelay = oneHourBeforeTime - now.getTime();
@@ -201,13 +189,12 @@ function scheduleMultiStageReminder(reminder, notificationCallback) {
             setTimeout(async () => {
                 const currentReminder = reminders.find(r => r.id === reminder.id);
                 if (currentReminder && currentReminder.active) {
-                    await notificationCallback(`⏰ 1 hour reminder: ${reminder.task}`);
+                    await notificationCallback(`1 hour reminder: ${reminder.task}`);
                 }
             }, oneHourDelay);
         }
     }
     
-    // Schedule 30 minutes before notification (only if more than 30 minutes away)
     if (totalDelay > thirtyMinutes) {
         const thirtyMinBeforeTime = targetDate.getTime() - thirtyMinutes;
         const thirtyMinDelay = thirtyMinBeforeTime - now.getTime();
@@ -217,22 +204,20 @@ function scheduleMultiStageReminder(reminder, notificationCallback) {
             setTimeout(async () => {
                 const currentReminder = reminders.find(r => r.id === reminder.id);
                 if (currentReminder && currentReminder.active) {
-                    await notificationCallback(`⏰ 30 minutes reminder: ${reminder.task}`);
+                    await notificationCallback(`30 minutes reminder: ${reminder.task}`);
                 }
             }, thirtyMinDelay);
         }
     }
     
-    // Schedule main reminder notification
     if (totalDelay <= maxTimeout) {
         console.log(`Scheduling main reminder in ${Math.round(totalDelay / 1000 / 60)} minutes`);
         setTimeout(async () => {
             try {
                 const currentReminder = reminders.find(r => r.id === reminder.id);
                 if (currentReminder && currentReminder.active) {
-                    await notificationCallback(`🔔 Reminder NOW: ${reminder.task}`);
+                    await notificationCallback(`Reminder NOW: ${reminder.task}`);
                     
-                    // Mark as inactive instead of removing (for history)
                     currentReminder.active = false;
                     saveData();
                 }
@@ -245,15 +230,8 @@ function scheduleMultiStageReminder(reminder, notificationCallback) {
     }
 }
 
-// Send immediate notification for new items
 async function sendImmediateNotification(type, content, fromChatId, telegramBot, telegramChatId) {
-    const typeEmoji = {
-        'REMINDER': '⏰',
-        'MEMORY': '📝', 
-        'IMPORTANT': '📰'
-    };
-    
-    const message = `${typeEmoji[type]} New ${type.toLowerCase()}: ${content} (from ${fromChatId})`;
+    const message = `New ${type.toLowerCase()}: ${content} (from ${fromChatId})`;
     
     try {
         if (telegramBot && telegramChatId) {
@@ -264,7 +242,6 @@ async function sendImmediateNotification(type, content, fromChatId, telegramBot,
     }
 }
 
-// Schedule existing reminders on startup
 function scheduleExistingReminders(notificationCallback, filterFn = () => true) {
     const activeReminders = reminders.filter(r => r.active && r.targetDateTime);
     console.log(`Found ${activeReminders.length} active reminders to schedule...`);
@@ -277,7 +254,6 @@ function scheduleExistingReminders(notificationCallback, filterFn = () => true) 
             const targetDate = new Date(reminder.targetDateTime);
             const now = new Date();
             
-            // Handle past reminders
             if (targetDate <= now) {
                 console.log(`Marking past reminder as inactive: ${reminder.task} (was scheduled for ${targetDate.toISOString()})`);
                 reminder.active = false;
@@ -293,13 +269,11 @@ function scheduleExistingReminders(notificationCallback, filterFn = () => true) 
     
     console.log(`Scheduled ${scheduledCount} future reminders, marked ${pastCount} past reminders as inactive`);
     
-    // Save any changes (inactive past reminders)
     if (pastCount > 0) {
         saveData();
     }
 }
 
-// Add chat message to history
 function addToHistory(chatId, role, content) {
     if (!chatHistory[chatId]) chatHistory[chatId] = [];
     
@@ -309,7 +283,6 @@ function addToHistory(chatId, role, content) {
     }
 }
 
-// Reload data from files (for real-time sync)
 function reloadMemories() {
     try {
         if (fs.existsSync('saved_memories.json')) {
@@ -338,11 +311,9 @@ function reloadReminders() {
     }
 }
 
-// Extract number from text using words
 function extractNumberFromText(text) {
     const lowerText = text.toLowerCase();
     
-    // Handle "last" keyword
     if (lowerText.includes('last')) {
         if (lowerText.includes('reminder')) {
             const activeReminders = reminders.filter(r => r.active);
@@ -366,7 +337,6 @@ function extractNumberFromText(text) {
     return null;
 }
 
-// Interpret command using Gemini AI
 async function interpretCommand(userCommand, apiKey) {
     if (!apiKey || apiKey === 'your_gemini_api_key_here') {
         return null;
@@ -417,24 +387,23 @@ async function interpretCommand(userCommand, apiKey) {
     }
 }
 
-// Execute action with platform-specific message sender
 async function executeAction(action, command, messageSender) {
     switch (action) {
         case 'SHOW_MEMORIES':
             reloadMemories();
             if (memories.length === 0) {
-                await messageSender('📝 No memories saved yet.');
+                await messageSender('No memories saved yet.');
                 return;
             }
             const memoryList = memories.map((m, i) => `${i + 1}. ${m.content}${m.autoCreated ? ' (auto)' : ''}`);
-            await messageSender(`📝 Your memories:\n${memoryList.join('\n')}`);
+            await messageSender(`Your memories:\n${memoryList.join('\n')}`);
             break;
             
         case 'SHOW_REMINDERS':
             reloadReminders();
             const activeReminders = reminders.filter(r => r.active);
             if (activeReminders.length === 0) {
-                await messageSender('⏰ No active reminders.');
+                await messageSender('No active reminders.');
                 return;
             }
             const reminderList = activeReminders.map((r, i) => {
@@ -448,57 +417,57 @@ async function executeAction(action, command, messageSender) {
                 const auto = r.autoCreated ? ' (auto)' : '';
                 return `${i + 1}. ${r.task} - ${dateStr}${auto}`;
             });
-            await messageSender(`⏰ Your reminders:\n${reminderList.join('\n')}`);
+            await messageSender(`Your reminders:\n${reminderList.join('\n')}`);
             break;
             
         case 'SHOW_UPDATES':
             if (importantUpdates.length === 0) {
-                await messageSender('📰 No important updates.');
+                await messageSender('No important updates.');
                 return;
             }
             const updateList = importantUpdates.map((u, i) => {
-                const priority = u.priority === 'HIGH' ? '🚨' : u.priority === 'MEDIUM' ? '🟡' : '🟢';
-                return `${i + 1}. ${priority} ${u.content} (${u.timestamp})`;
+                const priority = u.priority === 'HIGH' ? 'HIGH' : u.priority === 'MEDIUM' ? 'MED' : 'LOW';
+                return `${i + 1}. [${priority}] ${u.content} (${u.timestamp})`;
             });
-            await messageSender(`📰 Important updates:\n${updateList.join('\n')}`);
+            await messageSender(`Important updates:\n${updateList.join('\n')}`);
             importantUpdates.forEach(u => u.read = true);
             saveData();
             break;
             
         case 'DELETE_ALL_MEMORIES':
             const memCount = clearAllMemories();
-            await messageSender(memCount === 0 ? '📝 No memories to delete.' : `✅ Deleted all ${memCount} memories.`);
+            await messageSender(memCount === 0 ? 'No memories to delete.' : `Deleted all ${memCount} memories.`);
             break;
             
         case 'DELETE_ALL_REMINDERS':
             const remCount = clearAllReminders();
-            await messageSender(remCount === 0 ? '⏰ No active reminders to delete.' : `✅ Cancelled all ${remCount} reminders.`);
+            await messageSender(remCount === 0 ? 'No active reminders to delete.' : `Cancelled all ${remCount} reminders.`);
             break;
             
         case 'DELETE_ALL_UPDATES':
             const updCount = clearAllUpdates();
-            await messageSender(updCount === 0 ? '📰 No updates to delete.' : `✅ Deleted all ${updCount} updates.`);
+            await messageSender(updCount === 0 ? 'No updates to delete.' : `Deleted all ${updCount} updates.`);
             break;
             
         case 'SHOW_BLOCKED':
             const contacts = contactManager.getContactLists();
             if (contacts.blocked.length === 0) {
-                await messageSender('🚫 No blocked contacts.');
+                await messageSender('No blocked contacts.');
             } else {
                 const blockedList = contacts.blocked.map((c, i) => 
                     `${i + 1}. ${c.name || c.chatId} - ${c.reason}`).join('\n');
-                await messageSender(`🚫 Blocked contacts:\n${blockedList}`);
+                await messageSender(`Blocked contacts:\n${blockedList}`);
             }
             break;
             
         case 'SHOW_PRIORITY':
             const priorityList = contactManager.getContactLists();
             if (priorityList.priority.length === 0) {
-                await messageSender('⭐ No priority contacts.');
+                await messageSender('No priority contacts.');
             } else {
                 const list = priorityList.priority.map((c, i) => 
                     `${i + 1}. ${c.name || c.chatId} - ${c.priority} (${c.rules.length} rules)`).join('\n');
-                await messageSender(`⭐ Priority contacts:\n${list}`);
+                await messageSender(`Priority contacts:\n${list}`);
             }
             break;
             
@@ -512,11 +481,10 @@ async function executeAction(action, command, messageSender) {
     }
 }
 
-// Handle cancel reminder
 async function handleCancelReminder(command, messageSender) {
     const match = command.match(/(\d+)/) || [null, extractNumberFromText(command)];
     if (!match || !match[1]) {
-        await messageSender('❌ Please specify which reminder number to cancel');
+        await messageSender('Please specify which reminder number to cancel');
         return;
     }
     
@@ -524,40 +492,38 @@ async function handleCancelReminder(command, messageSender) {
     const activeReminders = reminders.filter(r => r.active);
     
     if (reminderIndex < 0 || reminderIndex >= activeReminders.length) {
-        await messageSender('❌ Invalid reminder number');
+        await messageSender('Invalid reminder number');
         return;
     }
     
     const targetReminder = activeReminders[reminderIndex];
     removeReminder(targetReminder.id);
-    await messageSender(`✅ Cancelled reminder: ${targetReminder.task}`);
+    await messageSender(`Cancelled reminder: ${targetReminder.task}`);
 }
 
-// Handle delete memory
 async function handleDeleteMemory(command, messageSender) {
     const match = command.match(/(\d+)/) || [null, extractNumberFromText(command)];
     if (!match || !match[1]) {
-        await messageSender('❌ Please specify which memory number to delete');
+        await messageSender('Please specify which memory number to delete');
         return;
     }
     
     const memoryIndex = parseInt(match[1]) - 1;
     
     if (memoryIndex < 0 || memoryIndex >= memories.length) {
-        await messageSender('❌ Invalid memory number');
+        await messageSender('Invalid memory number');
         return;
     }
     
     const deletedMemory = removeMemory(memoryIndex);
-    await messageSender(`✅ Deleted memory: ${deletedMemory.content}`);
+    await messageSender(`Deleted memory: ${deletedMemory.content}`);
 }
 
-// Handle save memory
 async function handleSaveMemory(command, chatId, messageSender, notificationBot, telegramChatId) {
     const contentToSave = command.replace(/save.*?memory.*?that/i, '').replace(/save.*?to.*?memory/i, '').trim();
     
     if (!contentToSave) {
-        await messageSender('❌ Please specify what to save');
+        await messageSender('Please specify what to save');
         return;
     }
     
@@ -570,13 +536,11 @@ async function handleSaveMemory(command, chatId, messageSender, notificationBot,
     };
     
     addMemory(memory);
-    await messageSender('✅ Saved to memory: ' + contentToSave);
+    await messageSender('Saved to memory: ' + contentToSave);
     
-    // Send immediate notification
     await sendImmediateNotification('MEMORY', contentToSave, chatId, notificationBot, telegramChatId);
 }
 
-// Create reminder
 async function createReminder(command, chatId, apiKey, notificationCallback, messageSender, notificationBot, telegramChatId) {
     const reminder = {
         id: Date.now(),
@@ -595,25 +559,22 @@ async function createReminder(command, chatId, apiKey, notificationCallback, mes
     if (calculatedReminder.targetDateTime) {
         scheduleMultiStageReminder(calculatedReminder, notificationCallback);
         const targetDate = new Date(calculatedReminder.targetDateTime);
-        await messageSender(`🕒 Reminder set for ${targetDate.toLocaleString()}: "${calculatedReminder.task}"`);
+        await messageSender(`Reminder set for ${targetDate.toLocaleString()}: "${calculatedReminder.task}"`);
     } else {
-        await messageSender(`❌ Could not parse date/time from: "${command}"`);
+        await messageSender(`Could not parse date/time from: "${command}"`);
         return;
     }
     
     await sendImmediateNotification('REMINDER', calculatedReminder.task, chatId, notificationBot, telegramChatId);
 }
 
-// Setup daily summary and reminder checks
 function setupDailySummary(summaryCallback) {
     const cron = require('node-cron');
     cron.schedule('0 21 * * *', summaryCallback);
 }
 
-// Setup periodic reminder check for long-term reminders
 function setupPeriodicReminderCheck(notificationCallback, filterFn = () => true) {
     const cron = require('node-cron');
-    // Check every day at midnight for reminders that can now be scheduled
     cron.schedule('0 0 * * *', () => {
         console.log('Checking for long-term reminders that can now be scheduled...');
         const now = new Date();
@@ -625,7 +586,6 @@ function setupPeriodicReminderCheck(notificationCallback, filterFn = () => true)
             const targetDate = new Date(reminder.targetDateTime);
             const totalDelay = targetDate.getTime() - now.getTime();
             
-            // If reminder is now within scheduling range and not already scheduled today
             if (totalDelay > 0 && totalDelay <= maxTimeout) {
                 console.log(`Scheduling previously long-term reminder: ${reminder.task}`);
                 scheduleMultiStageReminder(reminder, notificationCallback);
@@ -639,19 +599,16 @@ function setupPeriodicReminderCheck(notificationCallback, filterFn = () => true)
     });
 }
 
-// Generate daily summary
 function generateDailySummary() {
     const today = new Date().toDateString();
     const now = new Date();
     const fourDaysFromNow = new Date(now.getTime() + (4 * 24 * 60 * 60 * 1000));
     
-    // Get items CREATED today
     const todayReminders = reminders.filter(r => {
         if (!r.createdAt) return false;
         return new Date(r.createdAt).toDateString() === today;
     });
     
-    // Get reminders DUE within next 4 days
     const upcomingReminders = reminders.filter(r => {
         if (!r.active || !r.targetDateTime) return false;
         const targetDate = new Date(r.targetDateTime);
@@ -670,10 +627,10 @@ function generateDailySummary() {
         return memoryDate.toDateString() === today;
     });
     
-    let summary = `🌆 Daily Summary - ${today}\n\n`;
+    let summary = `Daily Summary - ${today}\n\n`;
     
     if (todayReminders.length > 0) {
-        summary += `⏰ New Reminders Created (${todayReminders.length}):\n`;
+        summary += `New Reminders Created (${todayReminders.length}):\n`;
         todayReminders.forEach((r, i) => {
             const auto = r.autoCreated ? ' (auto)' : '';
             summary += `${i + 1}. ${r.task}${auto}\n`;
@@ -682,7 +639,7 @@ function generateDailySummary() {
     }
     
     if (upcomingReminders.length > 0) {
-        summary += `📅 Upcoming Reminders (Next 4 Days):\n`;
+        summary += `Upcoming Reminders (Next 4 Days):\n`;
         upcomingReminders.forEach((r, i) => {
             const targetDate = new Date(r.targetDateTime);
             const dateStr = targetDate.toLocaleDateString();
@@ -693,16 +650,16 @@ function generateDailySummary() {
     }
     
     if (todayUpdates.length > 0) {
-        summary += `📰 New Updates Created (${todayUpdates.length}):\n`;
+        summary += `New Updates Created (${todayUpdates.length}):\n`;
         todayUpdates.slice(0, 5).forEach((u, i) => {
-            const priority = u.priority === 'HIGH' ? '🚨' : u.priority === 'MEDIUM' ? '🟡' : '🟢';
-            summary += `${i + 1}. ${priority} ${u.content}\n`;
+            const priority = u.priority === 'HIGH' ? 'HIGH' : u.priority === 'MEDIUM' ? 'MED' : 'LOW';
+            summary += `${i + 1}. [${priority}] ${u.content}\n`;
         });
         summary += '\n';
     }
     
     if (todayMemories.length > 0) {
-        summary += `📝 New Memories Created (${todayMemories.length}):\n`;
+        summary += `New Memories Created (${todayMemories.length}):\n`;
         todayMemories.forEach((m, i) => {
             const auto = m.autoCreated ? ' (auto)' : '';
             summary += `${i + 1}. ${m.content}${auto}\n`;
@@ -711,36 +668,30 @@ function generateDailySummary() {
     }
     
     if (todayReminders.length === 0 && upcomingReminders.length === 0 && todayUpdates.length === 0 && todayMemories.length === 0) {
-        summary += 'No new items created today and no upcoming reminders. Have a great evening! 🌙';
+        summary += 'No new items created today and no upcoming reminders. Have a great evening!';
     }
     
     return summary;
 }
 
-// Convert phone number to WhatsApp chat ID
 function phoneToWhatsAppId(input) {
-    // If already a chat ID, return as is
     if (input.includes('@') || input.startsWith('telegram_')) {
         return input;
     }
     
-    // Clean phone number (remove spaces, dashes, plus)
     const cleanNumber = input.replace(/[\s\-\+]/g, '');
     
-    // Add country code if missing (assume India +91 if 10 digits)
     if (cleanNumber.length === 10 && /^\d+$/.test(cleanNumber)) {
         return `91${cleanNumber}@c.us`;
     }
     
-    // If already has country code
     if (/^\d+$/.test(cleanNumber)) {
         return `${cleanNumber}@c.us`;
     }
     
-    return input; // Return as is if can't parse
+    return input;
 }
 
-// Helper functions for internal use
 function clearAllMemories() {
     const count = memories.length;
     memories.length = 0;
@@ -763,7 +714,6 @@ function clearAllUpdates() {
 }
 
 function addMemory(memory) {
-    // Ensure timestamp is in ISO format for consistent date filtering
     if (!memory.timestamp || !memory.timestamp.includes('T')) {
         memory.timestamp = new Date().toISOString();
     }
@@ -777,7 +727,6 @@ function addReminder(reminder) {
 }
 
 function addImportantUpdate(update) {
-    // Ensure timestamp is in ISO format for consistent date filtering
     if (!update.timestamp || !update.timestamp.includes('T')) {
         update.timestamp = new Date().toISOString();
     }
@@ -803,39 +752,26 @@ function removeMemory(index) {
 }
 
 module.exports = {
-    // Data management
     loadData,
     saveData,
     reloadMemories,
     reloadReminders,
     addToHistory,
-    
-    // AI functions
     callGeminiAPI,
     getAIResponse,
     calculateTargetDateTime,
     interpretCommand,
-    
-    // Action execution
     executeAction,
     handleCancelReminder,
     handleDeleteMemory,
     handleSaveMemory,
-    
-    // Reminder functions
     scheduleMultiStageReminder,
     scheduleExistingReminders,
     createReminder,
-    
-    // Daily summary
     setupDailySummary,
     generateDailySummary,
     setupPeriodicReminderCheck,
-    
-    // Notification functions
     sendImmediateNotification,
-    
-    // Contact management
     shouldProcessContact: contactManager.shouldProcessContact,
     applyContactRules: contactManager.applyContactRules,
     addBlockedContact: contactManager.addBlockedContact,
@@ -843,18 +779,12 @@ module.exports = {
     addPriorityContact: contactManager.addPriorityContact,
     removePriorityContact: contactManager.removePriorityContact,
     getContactLists: contactManager.getContactLists,
-    
-    // Utility functions
     extractNumberFromText,
     phoneToWhatsAppId,
-    
-    // Data getters
     getMemories: () => memories,
     getReminders: () => reminders,
     getChatHistory: () => chatHistory,
     getImportantUpdates: () => importantUpdates,
-    
-    // Data operations (kept for backward compatibility)
     addMemory,
     addReminder,
     addImportantUpdate,

@@ -1,10 +1,8 @@
 const fs = require('fs');
 
-// Contact lists
 let blockedContacts = [];
 let priorityContacts = [];
 
-// Load contact lists
 function loadContactLists() {
     try {
         if (fs.existsSync('blocked_contacts.json')) {
@@ -18,26 +16,21 @@ function loadContactLists() {
     }
 }
 
-// Save contact lists
 function saveContactLists() {
     fs.writeFileSync('blocked_contacts.json', JSON.stringify(blockedContacts, null, 2));
     fs.writeFileSync('priority_contacts.json', JSON.stringify(priorityContacts, null, 2));
 }
 
-// Check if contact should be processed
 function shouldProcessContact(chatId) {
-    // Always process own messages and main chat
-    if (chatId === '918227967496@c.us' || chatId.toString() === process.env.MY_TELEGRAM_CHAT_ID) {
+    if (chatId === `91${process.env.MY_WHATSAPP_NUMBER}@c.us` || chatId.toString() === process.env.MY_TELEGRAM_CHAT_ID) {
         return { process: true, priority: 'HIGH', rules: [] };
     }
     
-    // Check if blocked
     const blocked = blockedContacts.find(c => c.chatId === chatId);
     if (blocked) {
         return { process: false, reason: blocked.reason || 'Blocked contact' };
     }
     
-    // Check if priority contact
     const priority = priorityContacts.find(c => c.chatId === chatId);
     if (priority) {
         return { 
@@ -48,11 +41,9 @@ function shouldProcessContact(chatId) {
         };
     }
     
-    // Default: process with normal priority
     return { process: true, priority: 'MEDIUM', rules: [] };
 }
 
-// Add blocked contact
 function addBlockedContact(chatId, reason = 'Manual block', name = '') {
     const existing = blockedContacts.find(c => c.chatId === chatId);
     if (existing) {
@@ -70,7 +61,6 @@ function addBlockedContact(chatId, reason = 'Manual block', name = '') {
     saveContactLists();
 }
 
-// Remove blocked contact
 function removeBlockedContact(chatId) {
     const index = blockedContacts.findIndex(c => c.chatId === chatId);
     if (index !== -1) {
@@ -81,7 +71,6 @@ function removeBlockedContact(chatId) {
     return null;
 }
 
-// Add priority contact
 function addPriorityContact(chatId, priority = 'HIGH', rules = [], name = '') {
     const existing = priorityContacts.find(c => c.chatId === chatId);
     if (existing) {
@@ -101,7 +90,6 @@ function addPriorityContact(chatId, priority = 'HIGH', rules = [], name = '') {
     saveContactLists();
 }
 
-// Remove priority contact
 function removePriorityContact(chatId) {
     const index = priorityContacts.findIndex(c => c.chatId === chatId);
     if (index !== -1) {
@@ -112,7 +100,6 @@ function removePriorityContact(chatId) {
     return null;
 }
 
-// Apply contact-specific rules
 function applyContactRules(messageBody, contactInfo) {
     if (!contactInfo.rules || contactInfo.rules.length === 0) {
         return { processMessage: true, modifications: [] };
@@ -154,7 +141,6 @@ function applyContactRules(messageBody, contactInfo) {
     return { processMessage, modifications };
 }
 
-// Get contact lists for display
 function getContactLists() {
     return {
         blocked: blockedContacts,

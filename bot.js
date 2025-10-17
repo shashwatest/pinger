@@ -43,6 +43,10 @@ client.on('ready', () => {
         const summary = sharedUtils.generateDailySummary();
         sendToMyChat(summary);
     });
+    sharedUtils.setupMorningSchedule(() => {
+        const schedule = sharedUtils.generateMorningSchedule();
+        sendToMyChat(schedule);
+    });
     sharedUtils.setupPeriodicReminderCheck(notificationFn, (r) => !r.chatId.startsWith('telegram_'));
 });
 
@@ -167,11 +171,11 @@ async function processIncomingMessage(message, messageBody, chatId, contactInfo)
         const categorization = await sharedUtils.categorizeMessage(messageBody, GEMINI_API_KEY);
         
         if (categorization) {
-            if (contactInfo.priority === 'HIGH') {
-                categorization.priority = 'HIGH';
-            }
-            
             console.log(`Message categorized as: ${categorization.type} with priority: ${categorization.priority}`);
+            
+            if (contactInfo.priority === 'HIGH' && contactInfo.name) {
+                categorization.contactLabel = contactInfo.name;
+            }
             
             switch (categorization.type) {
                 case 'REMINDER':
@@ -182,9 +186,9 @@ async function processIncomingMessage(message, messageBody, chatId, contactInfo)
                     await autoSaveMemory(categorization, chatId);
                     console.log('Auto-saved memory');
                     break;
-                case 'IMPORTANT':
-                    await saveImportantUpdate(categorization, chatId);
-                    console.log('Saved important update');
+                case 'SCHEDULE':
+                    await autoAddSchedule(categorization, chatId);
+                    console.log('Auto-added to schedule');
                     break;
             }
             
@@ -215,10 +219,15 @@ async function autoCreateReminder(categorization, fromChatId) {
         chatId: fromChatId,
         active: true,
         priority: categorization.priority,
+        contactLabel: categorization.contactLabel,
         autoCreated: true
     };
     
     const calculatedReminder = await sharedUtils.calculateTargetDateTime(reminder, GEMINI_API_KEY);
+    
+    if (categorization.contactLabel) {
+        calculatedReminder.contactLabel = categorization.contactLabel;
+    }
     
     console.log('Creating reminder:', calculatedReminder);
     sharedUtils.addReminder(calculatedReminder);
@@ -247,19 +256,62 @@ async function autoSaveMemory(categorization, fromChatId) {
     await sharedUtils.sendImmediateNotification('MEMORY', memory.content, fromChatId, telegramBot, MY_TELEGRAM_CHAT_ID);
 }
 
-async function saveImportantUpdate(categorization, fromChatId) {
-    const update = {
+async function autoAddSchedule(categorization, fromChatId) {
+    const scheduleItem = {
         id: Date.now(),
-        content: categorization.content,
+        task: categorization.content,
         timestamp: new Date().toISOString(),
+        originalDateTime: categorization.datetime || categorization.content,
+        targetDateTime: null,
         chatId: fromChatId,
         priority: categorization.priority,
-        read: false
+        contactLabel: categorization.contactLabel,
+        autoCreated: true
     };
     
-    sharedUtils.addImportantUpdate(update);
+    const calculated = await sharedUtils.calculateTargetDateTime(scheduleItem, GEMINI_API_KEY);
     
-    await sharedUtils.sendImmediateNotification('IMPORTANT', update.content, fromChatId, telegramBot, MY_TELEGRAM_CHAT_ID);
+    if (!calculated.task || calculated.task === '') {
+        calculated.task = categorization.content;
+    }
+    
+    if (!calculated.targetDateTime) {
+        const today = new Date();
+        today.setHours(10, 0, 0, 0);
+        calculated.targetDateTime = today.toISOString();
+    }
+    
+    if (!calculated.priority) {
+        calculated.priority = categorization.priority;
+    }
+    
+    if (categorization.contactLabel) {
+        calculated.contactLabel = categorization.contactLabel;
+    }
+    
+    sharedUtils.addScheduleItem(calculated);
+    
+    const reminder = {
+        id: Date.now() + 1,
+        task: calculated.task,
+        createdAt: calculated.timestamp,
+        originalDateTime: calculated.originalDateTime,
+        targetDateTime: calculated.targetDateTime,
+        chatId: fromChatId,
+        active: true,
+        priority: calculated.priority,
+        autoCreated: true,
+        isScheduleLinked: true
+    };
+    
+    sharedUtils.addReminder(reminder);
+    
+    if (calculated.targetDateTime) {
+        const notificationFn = (msg) => sharedUtils.sendReminderNotification(msg, telegramBot, MY_TELEGRAM_CHAT_ID);
+        sharedUtils.scheduleMultiStageReminder(reminder, notificationFn);
+    }
+    
+    await sharedUtils.sendImmediateNotification('SCHEDULE', calculated.task, fromChatId, telegramBot, MY_TELEGRAM_CHAT_ID);
 }
 
 

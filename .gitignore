@@ -1,10 +1,11 @@
 node_modules/
+.amazonq
 .env
 .wwebjs_auth/
 .wwebjs_cache/
 saved_memories.json
 reminders.json
-important_updates.json
+schedule.json
 chat_history.json
 blocked_contacts.json
 priority_contacts.json

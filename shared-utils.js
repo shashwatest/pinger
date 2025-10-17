@@ -4,7 +4,7 @@ const contactManager = require('./contact-manager');
 let memories = [];
 let reminders = [];
 let chatHistory = {};
-let importantUpdates = [];
+let scheduleItems = [];
 
 function loadData() {
     try {
@@ -17,8 +17,8 @@ function loadData() {
         if (fs.existsSync('chat_history.json')) {
             chatHistory = JSON.parse(fs.readFileSync('chat_history.json', 'utf8'));
         }
-        if (fs.existsSync('important_updates.json')) {
-            importantUpdates = JSON.parse(fs.readFileSync('important_updates.json', 'utf8'));
+        if (fs.existsSync('schedule.json')) {
+            scheduleItems = JSON.parse(fs.readFileSync('schedule.json', 'utf8'));
         }
         contactManager.loadContactLists();
     } catch (error) {
@@ -30,7 +30,7 @@ function saveData() {
     fs.writeFileSync('saved_memories.json', JSON.stringify(memories, null, 2));
     fs.writeFileSync('reminders.json', JSON.stringify(reminders, null, 2));
     fs.writeFileSync('chat_history.json', JSON.stringify(chatHistory, null, 2));
-    fs.writeFileSync('important_updates.json', JSON.stringify(importantUpdates, null, 2));
+    fs.writeFileSync('schedule.json', JSON.stringify(scheduleItems, null, 2));
 }
 
 async function callGeminiAPI(userMessage, context = [], memoriesContext = [], apiKey) {
@@ -180,6 +180,8 @@ function scheduleMultiStageReminder(reminder, notificationCallback) {
         return;
     }
     
+    const label = reminder.contactLabel || (reminder.priority === 'HIGH' ? '🔴' : reminder.priority === 'MEDIUM' ? '🟡' : '🟢');
+    
     if (totalDelay > oneHour) {
         const oneHourBeforeTime = targetDate.getTime() - oneHour;
         const oneHourDelay = oneHourBeforeTime - now.getTime();
@@ -189,7 +191,7 @@ function scheduleMultiStageReminder(reminder, notificationCallback) {
             setTimeout(async () => {
                 const currentReminder = reminders.find(r => r.id === reminder.id);
                 if (currentReminder && currentReminder.active) {
-                    await notificationCallback(`1 hour reminder: ${reminder.task}`);
+                    await notificationCallback(`1 hour reminder: ${label} ${reminder.task}`);
                 }
             }, oneHourDelay);
         }
@@ -204,7 +206,7 @@ function scheduleMultiStageReminder(reminder, notificationCallback) {
             setTimeout(async () => {
                 const currentReminder = reminders.find(r => r.id === reminder.id);
                 if (currentReminder && currentReminder.active) {
-                    await notificationCallback(`30 minutes reminder: ${reminder.task}`);
+                    await notificationCallback(`30 minutes reminder: ${label} ${reminder.task}`);
                 }
             }, thirtyMinDelay);
         }
@@ -216,7 +218,7 @@ function scheduleMultiStageReminder(reminder, notificationCallback) {
             try {
                 const currentReminder = reminders.find(r => r.id === reminder.id);
                 if (currentReminder && currentReminder.active) {
-                    await notificationCallback(`Reminder NOW: ${reminder.task}`);
+                    await notificationCallback(`Reminder NOW: ${label} ${reminder.task}`);
                     
                     currentReminder.active = false;
                     saveData();
@@ -253,20 +255,20 @@ async function categorizeMessage(messageBody, apiKey) {
     const categorizePrompt = `Analyze this message and categorize it. Return JSON format:
 
         {
-        "type": "REMINDER|MEMORY|IMPORTANT|NONE",
+        "type": "REMINDER|MEMORY|SCHEDULE|NONE",
         "priority": "HIGH|MEDIUM|LOW",
         "content": "formatted for whatsapp and briefly summarised extracted content ensuring easy readability",
         "datetime": "exact date/time as mentioned in message, null if no date/time"
         }
 
         Rules:
-        - MEMORY: containing information about birthdays, anniversaries or containing the keyword "!memory". and strcitly nothing else should be categorized as memory.
+        - MEMORY: containing information about birthdays, anniversaries or containing the keyword "!memory". and strictly nothing else should be categorized as memory.
         - REMINDER: Contains time/date references with tasks to do (and not birthdays or anniversaries) or containing the keyword "!reminder"
-        - IMPORTANT: Urgent info, updates, news or containing the keyword "!important"
-        - HIGH priority: Urgent, time-sensitive, emergency
-        - MEDIUM priority: Important but not urgent
-        - LOW priority: General info
-        - For datetime: Extract EXACTLY as written (e.g. "tomorrow at 3pm", "21st September 2025", "10am")
+        - SCHEDULE: Tasks/meetings/appointments for a specific day (especially "today", "tomorrow") with or without specific time, or containing the keyword "!schedule". Examples: "I need to meet professor at 3pm today", "dentist appointment tomorrow", "gym session today evening"
+        - HIGH priority: Only for urgent, time-sensitive, emergency, or critical meetings
+        - MEDIUM priority: Regular tasks, appointments, meetings (DEFAULT for most schedule items)
+        - LOW priority: Optional or flexible tasks
+        - For datetime: Extract EXACTLY as written (e.g. "tomorrow at 3pm", "today at 5pm", "21st September 2025", "10am")
 
         Message: "${messageBody}"
 
@@ -370,6 +372,20 @@ function reloadReminders() {
     }
 }
 
+function reloadSchedule() {
+    try {
+        if (fs.existsSync('schedule.json')) {
+            const fileContent = fs.readFileSync('schedule.json', 'utf8');
+            if (fileContent.trim()) {
+                scheduleItems = JSON.parse(fileContent);
+            }
+        }
+    } catch (error) {
+        console.error('Error loading schedule:', error.message);
+        scheduleItems = [];
+    }
+}
+
 function extractNumberFromText(text) {
     const lowerText = text.toLowerCase();
     
@@ -412,8 +428,9 @@ async function interpretCommand(userCommand, apiKey) {
         - "CANCEL_REMINDER" - if user wants to cancel/delete a reminder
         - "DELETE_ALL_MEMORIES" - if user wants to delete/clear all memories
         - "DELETE_ALL_REMINDERS" - if user wants to delete/clear all reminders
-        - "SHOW_UPDATES" - if user wants to see important updates
-        - "DELETE_ALL_UPDATES" - if user wants to clear all updates
+        - "SHOW_SCHEDULE" - if user wants to see their schedule for a day
+        - "ADD_SCHEDULE" - if user wants to add something to their schedule
+        - "DELETE_ALL_SCHEDULE" - if user wants to clear all schedule items
         - "SHOW_BLOCKED" - if user wants to see blocked contacts
         - "SHOW_PRIORITY" - if user wants to see priority contacts
         - "BLOCK_CONTACT" - if user wants to block a contact
@@ -479,18 +496,19 @@ async function executeAction(action, command, messageSender) {
             await messageSender(`Your reminders:\n${reminderList.join('\n')}`);
             break;
             
-        case 'SHOW_UPDATES':
-            if (importantUpdates.length === 0) {
-                await messageSender('No important updates.');
+        case 'SHOW_SCHEDULE':
+            reloadSchedule();
+            const todaySchedule = getTodaySchedule();
+            if (todaySchedule.length === 0) {
+                await messageSender('No schedule items for today.');
                 return;
             }
-            const updateList = importantUpdates.map((u, i) => {
-                const priority = u.priority === 'HIGH' ? 'HIGH' : u.priority === 'MEDIUM' ? 'MED' : 'LOW';
-                return `${i + 1}. [${priority}] ${u.content} (${u.timestamp})`;
+            const scheduleList = todaySchedule.map((s, i) => {
+                const time = s.targetDateTime ? new Date(s.targetDateTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'No time';
+                const label = s.contactLabel || (s.priority === 'HIGH' ? '🔴' : s.priority === 'MEDIUM' ? '🟡' : '🟢');
+                return `${i + 1}. ${label} ${s.task} - ${time}`;
             });
-            await messageSender(`Important updates:\n${updateList.join('\n')}`);
-            importantUpdates.forEach(u => u.read = true);
-            saveData();
+            await messageSender(`Today's Schedule:\n${scheduleList.join('\n')}`);
             break;
             
         case 'DELETE_ALL_MEMORIES':
@@ -503,9 +521,13 @@ async function executeAction(action, command, messageSender) {
             await messageSender(remCount === 0 ? 'No active reminders to delete.' : `Cancelled all ${remCount} reminders.`);
             break;
             
-        case 'DELETE_ALL_UPDATES':
-            const updCount = clearAllUpdates();
-            await messageSender(updCount === 0 ? 'No updates to delete.' : `Deleted all ${updCount} updates.`);
+        case 'DELETE_ALL_SCHEDULE':
+            const schedCount = clearAllSchedule();
+            await messageSender(schedCount === 0 ? 'No schedule items to delete.' : `Deleted all ${schedCount} schedule items.`);
+            break;
+            
+        case 'ADD_SCHEDULE':
+            await messageSender('Use: "schedule [task] at [time]" or "add to schedule [task]"');
             break;
             
         case 'SHOW_BLOCKED':
@@ -632,6 +654,11 @@ function setupDailySummary(summaryCallback) {
     cron.schedule('0 21 * * *', summaryCallback);
 }
 
+function setupMorningSchedule(scheduleCallback) {
+    const cron = require('node-cron');
+    cron.schedule('0 7 * * *', scheduleCallback);
+}
+
 function setupPeriodicReminderCheck(notificationCallback, filterFn = () => true) {
     const cron = require('node-cron');
     cron.schedule('0 0 * * *', () => {
@@ -674,11 +701,7 @@ function generateDailySummary() {
         return targetDate >= now && targetDate <= fourDaysFromNow;
     }).sort((a, b) => new Date(a.targetDateTime) - new Date(b.targetDateTime));
     
-    const todayUpdates = importantUpdates.filter(u => {
-        if (!u.timestamp) return false;
-        const updateDate = u.timestamp.includes('T') ? new Date(u.timestamp) : new Date(Date.parse(u.timestamp));
-        return updateDate.toDateString() === today;
-    });
+    const todaySchedule = getTodaySchedule();
     
     const todayMemories = memories.filter(m => {
         if (!m.timestamp) return false;
@@ -708,11 +731,11 @@ function generateDailySummary() {
         summary += '\n';
     }
     
-    if (todayUpdates.length > 0) {
-        summary += `New Updates Created (${todayUpdates.length}):\n`;
-        todayUpdates.slice(0, 5).forEach((u, i) => {
-            const priority = u.priority === 'HIGH' ? 'HIGH' : u.priority === 'MEDIUM' ? 'MED' : 'LOW';
-            summary += `${i + 1}. [${priority}] ${u.content}\n`;
+    if (todaySchedule.length > 0) {
+        summary += `Today's Schedule (${todaySchedule.length} items):\n`;
+        todaySchedule.forEach((s, i) => {
+            const time = s.targetDateTime ? new Date(s.targetDateTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'No time';
+            summary += `${i + 1}. ${s.task} - ${time}\n`;
         });
         summary += '\n';
     }
@@ -726,11 +749,31 @@ function generateDailySummary() {
         summary += '\n';
     }
     
-    if (todayReminders.length === 0 && upcomingReminders.length === 0 && todayUpdates.length === 0 && todayMemories.length === 0) {
+    if (todayReminders.length === 0 && upcomingReminders.length === 0 && todaySchedule.length === 0 && todayMemories.length === 0) {
         summary += 'No new items created today and no upcoming reminders. Have a great evening!';
     }
     
     return summary;
+}
+
+function generateMorningSchedule() {
+    const today = new Date().toDateString();
+    const todaySchedule = getTodaySchedule();
+    
+    if (todaySchedule.length === 0) {
+        return `Good morning! ☀️\n\nYou have no scheduled items for today (${today}).\n\nHave a great day!`;
+    }
+    
+    let message = `Good morning! ☀️\n\nHere's your schedule for today (${today}):\n\n`;
+    
+    todaySchedule.forEach((s, i) => {
+        const time = s.targetDateTime ? new Date(s.targetDateTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'No specific time';
+        const label = s.contactLabel || (s.priority === 'HIGH' ? '🔴' : s.priority === 'MEDIUM' ? '🟡' : '🟢');
+        message += `${i + 1}. ${label} ${s.task} - ${time}\n`;
+    });
+    
+    message += '\nHave a productive day! 💪';
+    return message;
 }
 
 function phoneToWhatsAppId(input) {
@@ -765,11 +808,106 @@ function clearAllReminders() {
     return activeCount;
 }
 
-function clearAllUpdates() {
-    const count = importantUpdates.length;
-    importantUpdates.length = 0;
+function clearAllSchedule() {
+    const count = scheduleItems.length;
+    scheduleItems.length = 0;
     saveData();
     return count;
+}
+
+function getTodaySchedule() {
+    const today = new Date().toDateString();
+    return scheduleItems.filter(s => {
+        if (!s.targetDateTime) return false;
+        return new Date(s.targetDateTime).toDateString() === today;
+    }).sort((a, b) => new Date(a.targetDateTime) - new Date(b.targetDateTime));
+}
+
+function getScheduleForDate(date) {
+    const targetDateStr = date.toDateString();
+    return scheduleItems.filter(s => {
+        if (!s.targetDateTime) return false;
+        return new Date(s.targetDateTime).toDateString() === targetDateStr;
+    }).sort((a, b) => new Date(a.targetDateTime) - new Date(b.targetDateTime));
+}
+
+function parseDateFromCommand(dateStr) {
+    const lower = dateStr.toLowerCase();
+    const now = new Date();
+    
+    if (lower === 'today') return now;
+    if (lower === 'tomorrow') {
+        const tomorrow = new Date(now);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        return tomorrow;
+    }
+    
+    if (dateStr.includes('-')) {
+        return new Date(dateStr);
+    }
+    
+    if (dateStr.includes('/')) {
+        const parts = dateStr.split('/');
+        return new Date(now.getFullYear(), parseInt(parts[0]) - 1, parseInt(parts[1]));
+    }
+    
+    return now;
+}
+
+async function handleAddSchedule(command, chatId, apiKey, notificationFn, messageSender, notificationBot, telegramChatId) {
+    const scheduleItem = {
+        id: Date.now(),
+        task: command.replace(/schedule|add to schedule|!schedule/gi, '').trim(),
+        createdAt: new Date().toISOString(),
+        originalDateTime: command,
+        targetDateTime: null,
+        chatId: chatId,
+        priority: 'MEDIUM',
+        autoCreated: false
+    };
+    
+    const calculated = await calculateTargetDateTime(scheduleItem, apiKey);
+    
+    if (!calculated.targetDateTime) {
+        const today = new Date();
+        today.setHours(10, 0, 0, 0);
+        calculated.targetDateTime = today.toISOString();
+    }
+    
+    addScheduleItem(calculated);
+    
+    const reminder = {
+        id: Date.now() + 1,
+        task: calculated.task,
+        createdAt: calculated.createdAt,
+        originalDateTime: calculated.originalDateTime,
+        targetDateTime: calculated.targetDateTime,
+        chatId: chatId,
+        active: true,
+        priority: calculated.priority,
+        autoCreated: false,
+        isScheduleLinked: true
+    };
+    
+    addReminder(reminder);
+    
+    if (calculated.targetDateTime) {
+        scheduleMultiStageReminder(reminder, notificationFn);
+        const targetDate = new Date(calculated.targetDateTime);
+        await messageSender(`Added to schedule for ${targetDate.toLocaleDateString()} at ${targetDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}: "${calculated.task}"`);
+    } else {
+        await messageSender(`Added to schedule: "${calculated.task}" (no specific time)`);
+    }
+    
+    await sendImmediateNotification('SCHEDULE', calculated.task, chatId, notificationBot, telegramChatId);
+}
+
+function addScheduleItem(item) {
+    if (!item.timestamp || !item.timestamp.includes('T')) {
+        item.timestamp = new Date().toISOString();
+    }
+    scheduleItems.push(item);
+    saveData();
 }
 
 function addMemory(memory) {
@@ -785,13 +923,7 @@ function addReminder(reminder) {
     saveData();
 }
 
-function addImportantUpdate(update) {
-    if (!update.timestamp || !update.timestamp.includes('T')) {
-        update.timestamp = new Date().toISOString();
-    }
-    importantUpdates.push(update);
-    saveData();
-}
+
 
 function removeReminder(id) {
     const index = reminders.findIndex(r => r.id === id);
@@ -821,40 +953,48 @@ async function sendReminderNotification(message, notificationBot, chatId) {
 }
 
 async function handleDirectBlock(command, chatId, messageSender) {
-    const input = command.replace('block ', '').trim();
+    const input = command.replace(/block\s+/i, '').trim();
     if (!input) {
-        await messageSender('Use: "block [phone_number/chat_id] [reason]"');
+        await messageSender('Use: "block [phone/chatId] [name] [reason]"');
         return;
     }
     
     const parts = input.split(' ');
     const identifier = parts[0];
-    const reason = parts.slice(1).join(' ') || 'Manual block';
+    const name = parts.length > 1 ? parts[1] : '';
+    const reason = parts.slice(2).join(' ') || 'Manual block';
     
     const targetChatId = phoneToWhatsAppId(identifier);
-    contactManager.addBlockedContact(targetChatId, reason);
-    await messageSender(`Blocked: ${identifier} -> ${targetChatId}`);
+    contactManager.addBlockedContact(targetChatId, reason, name);
+    await messageSender(`Blocked: ${name || identifier} (${targetChatId})`);
 }
 
 async function handleDirectUnblock(command, chatId, messageSender) {
-    const input = command.replace('unblock ', '').trim();
+    const input = command.replace(/unblock\s+/i, '').trim();
     if (!input) {
-        await messageSender('Use: "unblock [phone_number/chat_id]"');
+        await messageSender('Use: "unblock [name/phone/chatId]"');
         return;
     }
     
-    const targetChatId = phoneToWhatsAppId(input);
-    const removed = contactManager.removeBlockedContact(targetChatId);
+    const contacts = contactManager.getContactLists();
     
-    if (removed) {
-        await messageSender(`Unblocked: ${input} -> ${targetChatId}`);
-    } else {
-        await messageSender(`Not found in blocked list: ${targetChatId}`);
+    let targetContact = contacts.blocked.find(c => 
+        c.chatId === input || 
+        c.chatId === phoneToWhatsAppId(input) ||
+        (c.name && c.name.toLowerCase() === input.toLowerCase())
+    );
+    
+    if (!targetContact) {
+        await messageSender(`Not found in blocked list: ${input}`);
+        return;
     }
+    
+    const removed = contactManager.removeBlockedContact(targetContact.chatId);
+    await messageSender(`Unblocked: ${removed.name || removed.chatId}`);
 }
 
 async function handleDirectAddPriority(command, chatId, messageSender) {
-    const input = command.replace('add priority ', '').trim();
+    const input = command.replace(/add priority\s+/i, '').trim();
     const parts = input.split(' ');
     
     if (parts.length < 2) {
@@ -874,29 +1014,37 @@ async function handleDirectAddPriority(command, chatId, messageSender) {
 }
 
 async function handleDirectRemovePriority(command, chatId, messageSender) {
-    const input = command.replace('remove priority ', '').trim();
+    const input = command.replace(/remove priority\s+/i, '').trim();
     if (!input) {
-        await messageSender('Use: "remove priority [phone_number/chat_id]"');
+        await messageSender('Use: "remove priority [name/phone/chatId]"');
         return;
     }
     
-    const targetChatId = phoneToWhatsAppId(input);
-    const removed = contactManager.removePriorityContact(targetChatId);
+    const contacts = contactManager.getContactLists();
     
-    if (removed) {
-        await messageSender(`Removed priority contact: ${removed.name || targetChatId}`);
-    } else {
-        await messageSender(`Not found in priority list: ${targetChatId}`);
+    let targetContact = contacts.priority.find(c => 
+        c.chatId === input || 
+        c.chatId === phoneToWhatsAppId(input) ||
+        (c.name && c.name.toLowerCase() === input.toLowerCase())
+    );
+    
+    if (!targetContact) {
+        await messageSender(`Not found in priority list: ${input}`);
+        return;
     }
+    
+    const removed = contactManager.removePriorityContact(targetContact.chatId);
+    await messageSender(`Removed priority contact: ${removed.name || removed.chatId}`);
 }
 
 function getStatusMessage(chatId) {
     const activeRemindersCount = reminders.filter(r => r.active).length;
+    const todaySchedule = getTodaySchedule();
     const contacts = contactManager.getContactLists();
     return `Bot Status:
 • Memories: ${memories.length}
 • Active reminders: ${activeRemindersCount}
-• Important updates: ${importantUpdates.length}
+• Today's schedule: ${todaySchedule.length} items
 • Blocked contacts: ${contacts.blocked.length}
 • Priority contacts: ${contacts.priority.length}
 • Chat history: ${chatHistory[chatId]?.length || 0} messages`;
@@ -929,18 +1077,25 @@ async function handleCommonCommands(command, fullChatId, chatId, apiKey, notific
         return true;
     }
     
-    if (command === 'show updates' || command === 'list updates' || command === 'my updates' || command.includes('important updates')) {
-        if (importantUpdates.length === 0) {
-            await messageSender('No important updates.');
+    if (command === 'show schedule' || command === 'list schedule' || command === 'my schedule' || command.includes('schedule for')) {
+        reloadSchedule();
+        const dateMatch = command.match(/schedule\s+(?:for\s+)?(today|tomorrow|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2})/i);
+        const targetDate = dateMatch ? parseDateFromCommand(dateMatch[1]) : new Date();
+        const scheduleForDate = getScheduleForDate(targetDate);
+        
+        if (scheduleForDate.length === 0) {
+            const dateStr = targetDate.toDateString();
+            await messageSender(`No schedule items for ${dateStr}.`);
             return true;
         }
-        const updateList = importantUpdates.map((u, i) => {
-            const priority = u.priority === 'HIGH' ? 'HIGH' : u.priority === 'MEDIUM' ? 'MED' : 'LOW';
-            return `${i + 1}. [${priority}] ${u.content} (${u.timestamp})`;
+        
+        const dateStr = targetDate.toDateString();
+        const scheduleList = scheduleForDate.map((s, i) => {
+            const time = s.targetDateTime ? new Date(s.targetDateTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'No time';
+            const label = s.contactLabel || (s.priority === 'HIGH' ? '🔴' : s.priority === 'MEDIUM' ? '🟡' : '🟢');
+            return `${i + 1}. ${label} ${s.task} - ${time}`;
         });
-        await messageSender(`Important updates:\n${updateList.join('\n')}\n\nTo clear: "delete all updates"`);
-        importantUpdates.forEach(u => u.read = true);
-        saveData();
+        await messageSender(`Schedule for ${dateStr}:\n${scheduleList.join('\n')}`);
         return true;
     }
     
@@ -956,9 +1111,9 @@ async function handleCommonCommands(command, fullChatId, chatId, apiKey, notific
         return true;
     }
     
-    if (command.includes('delete all updates') || command.includes('clear all updates')) {
-        const count = clearAllUpdates();
-        await messageSender(count === 0 ? 'No updates to delete.' : `Deleted all ${count} updates.`);
+    if (command.includes('delete all schedule') || command.includes('clear all schedule') || command.includes('clear schedule')) {
+        const count = clearAllSchedule();
+        await messageSender(count === 0 ? 'No schedule items to delete.' : `Deleted all ${count} schedule items.`);
         return true;
     }
     
@@ -986,7 +1141,7 @@ async function handleCommonCommands(command, fullChatId, chatId, apiKey, notific
     const interpretedAction = await interpretCommand(command, apiKey);
     
     if (interpretedAction) {
-        if (['CANCEL_REMINDER', 'DELETE_MEMORY', 'SAVE_MEMORY', 'SET_REMINDER'].includes(interpretedAction)) {
+        if (['CANCEL_REMINDER', 'DELETE_MEMORY', 'SAVE_MEMORY', 'SET_REMINDER', 'ADD_SCHEDULE'].includes(interpretedAction)) {
             switch (interpretedAction) {
                 case 'CANCEL_REMINDER':
                     await handleCancelReminder(command, messageSender);
@@ -999,6 +1154,9 @@ async function handleCommonCommands(command, fullChatId, chatId, apiKey, notific
                     break;
                 case 'SET_REMINDER':
                     await createReminder(command, fullChatId, apiKey, notificationFn, messageSender, notificationBot, telegramChatId);
+                    break;
+                case 'ADD_SCHEDULE':
+                    await handleAddSchedule(command, fullChatId, apiKey, notificationFn, messageSender, notificationBot, telegramChatId);
                     break;
             }
         } else {
@@ -1020,6 +1178,7 @@ module.exports = {
     saveData,
     reloadMemories,
     reloadReminders,
+    reloadSchedule,
     addToHistory,
     callGeminiAPI,
     getAIResponse,
@@ -1056,13 +1215,18 @@ module.exports = {
     getMemories: () => memories,
     getReminders: () => reminders,
     getChatHistory: () => chatHistory,
-    getImportantUpdates: () => importantUpdates,
+    getScheduleItems: () => scheduleItems,
+    getTodaySchedule,
+    getScheduleForDate,
     addMemory,
     addReminder,
-    addImportantUpdate,
+    addScheduleItem,
     removeReminder,
     removeMemory,
     clearAllMemories,
     clearAllReminders,
-    clearAllUpdates
+    clearAllSchedule,
+    setupMorningSchedule,
+    generateMorningSchedule,
+    handleAddSchedule
 };

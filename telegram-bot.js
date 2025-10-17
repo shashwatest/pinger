@@ -130,6 +130,11 @@ sharedUtils.setupDailySummary(() => {
     const summary = sharedUtils.generateDailySummary();
     bot.sendMessage(MY_TELEGRAM_CHAT_ID, summary);
 });
+sharedUtils.setupMorningSchedule(() => {
+    if (!MY_TELEGRAM_CHAT_ID) return;
+    const schedule = sharedUtils.generateMorningSchedule();
+    bot.sendMessage(MY_TELEGRAM_CHAT_ID, schedule);
+});
 sharedUtils.setupPeriodicReminderCheck(notificationFn, (r) => r.chatId.startsWith('telegram_'));
 
 bot.on('polling_error', (error) => {

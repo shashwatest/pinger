@@ -9,11 +9,10 @@ const TRIGGER_WORD = process.env.TRIGGER_WORD || '!triggerBotHelp';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 let saveNextMode = {};
-let pendingNotifications = [];
 
 const MY_CHAT_ID = `91${process.env.MY_WHATSAPP_NUMBER}@c.us`;
 const MY_TELEGRAM_CHAT_ID = process.env.MY_TELEGRAM_CHAT_ID;
-const BOT_MESSAGE_PREFIX = `${process.env.MY_BOT_NAME}: `;
+const BOT_MESSAGE_PREFIX = `${process.env.MY_BOT_NAME}:`;
 
 let telegramBot = null;
 try {
@@ -38,15 +37,16 @@ client.on('qr', (qr) => {
 client.on('ready', () => {
     console.log('WhatsApp bot is ready!');
     sharedUtils.loadData();
-    sharedUtils.scheduleExistingReminders(sendReminderNotification, (r) => !r.chatId.startsWith('telegram_'));
-    sharedUtils.setupDailySummary(sendDailySummary);
-    sharedUtils.setupPeriodicReminderCheck(sendReminderNotification, (r) => !r.chatId.startsWith('telegram_'));
+    const notificationFn = (msg) => sharedUtils.sendReminderNotification(msg, telegramBot, MY_TELEGRAM_CHAT_ID);
+    sharedUtils.scheduleExistingReminders(notificationFn, (r) => !r.chatId.startsWith('telegram_'));
+    sharedUtils.setupDailySummary(() => {
+        const summary = sharedUtils.generateDailySummary();
+        sendToMyChat(summary);
+    });
+    sharedUtils.setupPeriodicReminderCheck(notificationFn, (r) => !r.chatId.startsWith('telegram_'));
 });
 
-async function sendDailySummary() {
-    const summary = sharedUtils.generateDailySummary();
-    await sendToMyChat(summary);
-}
+
 
 client.on('message_create', async (message) => {
     if (message.fromMe) {
@@ -88,47 +88,52 @@ client.on('message', async (message) => {
         }
         
         if (command === '!dbg status') {
-            const memories = sharedUtils.getMemories();
-            const reminders = sharedUtils.getReminders();
-            const importantUpdates = sharedUtils.getImportantUpdates();
-            const chatHistory = sharedUtils.getChatHistory();
-            const contacts = sharedUtils.getContactLists();
-            const activeRemindersCount = reminders.filter(r => r.active).length;
-            const status = `Bot Status:
-            • Memories: ${memories.length}
-            • Active reminders: ${activeRemindersCount}
-            • Important updates: ${importantUpdates.length}
-            • Blocked contacts: ${contacts.blocked.length}
-            • Priority contacts: ${contacts.priority.length}
-            • Chat history: ${chatHistory[chatId]?.length || 0} messages`;
-            await sendToMyChat(status);
+            await sendToMyChat(sharedUtils.getStatusMessage(chatId));
             return;
         }
         
         if (command.startsWith('block ')) {
-            await handleDirectBlock(command);
+            await sharedUtils.handleDirectBlock(command, chatId, sendToMyChat);
             return;
         }
         
         if (command.startsWith('unblock ')) {
-            await handleDirectUnblock(command);
+            await sharedUtils.handleDirectUnblock(command, chatId, sendToMyChat);
             return;
         }
         
         if (command.startsWith('add priority ')) {
-            await handleDirectAddPriority(command);
+            await sharedUtils.handleDirectAddPriority(command, chatId, sendToMyChat);
             return;
         }
         
         if (command.startsWith('remove priority ')) {
-            await handleDirectRemovePriority(command);
+            await sharedUtils.handleDirectRemovePriority(command, chatId, sendToMyChat);
             return;
         }
         
         const interpretedAction = await sharedUtils.interpretCommand(command, GEMINI_API_KEY);
         
         if (interpretedAction) {
-            await executeAction(interpretedAction, command);
+            const notificationFn = (msg) => sharedUtils.sendReminderNotification(msg, telegramBot, MY_TELEGRAM_CHAT_ID);
+            if (['CANCEL_REMINDER', 'DELETE_MEMORY', 'SAVE_MEMORY', 'SET_REMINDER'].includes(interpretedAction)) {
+                switch (interpretedAction) {
+                    case 'CANCEL_REMINDER':
+                        await sharedUtils.handleCancelReminder(command, sendToMyChat);
+                        break;
+                    case 'DELETE_MEMORY':
+                        await sharedUtils.handleDeleteMemory(command, sendToMyChat);
+                        break;
+                    case 'SAVE_MEMORY':
+                        await sharedUtils.handleSaveMemory(command, MY_CHAT_ID, sendToMyChat, telegramBot, MY_TELEGRAM_CHAT_ID);
+                        break;
+                    case 'SET_REMINDER':
+                        await sharedUtils.createReminder(command, MY_CHAT_ID, GEMINI_API_KEY, notificationFn, sendToMyChat, telegramBot, MY_TELEGRAM_CHAT_ID);
+                        break;
+                }
+            } else {
+                await sharedUtils.executeAction(interpretedAction, command, sendToMyChat);
+            }
         } else {
             const response = await sharedUtils.getAIResponse(chatId, command, GEMINI_API_KEY);
             await sendToMyChat(response);
@@ -159,7 +164,7 @@ async function processIncomingMessage(message, messageBody, chatId, contactInfo)
         }
         
         console.log(`Attempting to categorize message: "${messageBody.substring(0, 50)}..."`);
-        const categorization = await categorizeMessage(messageBody, chatId);
+        const categorization = await sharedUtils.categorizeMessage(messageBody, GEMINI_API_KEY);
         
         if (categorization) {
             if (contactInfo.priority === 'HIGH') {
@@ -192,88 +197,11 @@ async function processIncomingMessage(message, messageBody, chatId, contactInfo)
     }
 }
 
-async function saveMemory(message, content) {
-    const memory = {
-        content: content,
-        timestamp: new Date().toLocaleString(),
-        chatId: message.from
-    };
-    
-    sharedUtils.addMemory(memory);
-    await message.reply('Saved to memory: ' + content);
-    
-    await sharedUtils.sendImmediateNotification('MEMORY', content, message.from, telegramBot, MY_TELEGRAM_CHAT_ID);
-}
 
-async function sendReminderNotification(message) {
-    try {
-        if (telegramBot && MY_TELEGRAM_CHAT_ID) {
-            await telegramBot.sendMessage(MY_TELEGRAM_CHAT_ID, message);
-        }
-    } catch (error) {
-        console.error('Error sending reminder notification:', error);
-    }
-}
 
-async function categorizeMessage(messageBody, fromChatId) {
-    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your_gemini_api_key_here') {
-        console.log('Gemini API key not configured, skipping categorization');
-        return null;
-    }
-    
-    console.log('Sending message to Gemini for categorization...');
-    
-    const categorizePrompt = `Analyze this message and categorize it. Return JSON format:
 
-        {
-        "type": "REMINDER|MEMORY|IMPORTANT|NONE",
-        "priority": "HIGH|MEDIUM|LOW",
-        "content": "formatted for whatsapp and briefly summarised extracted content ensuring easy readability",
-        "datetime": "exact date/time as mentioned in message, null if no date/time"
-        }
 
-        Rules:
-        - MEMORY: containing information about birthdays, anniversaries or containing the keyword "!memory". and strcitly nothing else should be categorized as memory.
-        - REMINDER: Contains time/date references with tasks to do (and not birthdays or anniversaries) or containing the keyword "!reminder"
-        - IMPORTANT: Urgent info, updates, news or containing the keyword "!important"
-        - HIGH priority: Urgent, time-sensitive, emergency
-        - MEDIUM priority: Important but not urgent
-        - LOW priority: General info
-        - For datetime: Extract EXACTLY as written (e.g. "tomorrow at 3pm", "21st September 2025", "10am")
 
-        Message: "${messageBody}"
-
-        Return only valid JSON:`;
-    
-    try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: categorizePrompt }] }]
-            })
-        });
-        
-        if (!response.ok) return null;
-        
-        const data = await response.json();
-        let rawResult = data.candidates[0].content.parts[0].text.trim();
-        console.log('Gemini response:', rawResult);
-        
-        // Remove markdown code blocks if present
-        if (rawResult.startsWith('```json')) {
-            rawResult = rawResult.replace(/```json\s*/, '').replace(/\s*```$/, '');
-        }
-        
-        const result = JSON.parse(rawResult);
-        console.log('Parsed result:', result);
-        
-        return result.type === 'NONE' ? null : result;
-    } catch (error) {
-        console.error('Error categorizing message:', error);
-        return null;
-    }
-}
 
 
 
@@ -296,7 +224,8 @@ async function autoCreateReminder(categorization, fromChatId) {
     sharedUtils.addReminder(calculatedReminder);
     
     if (calculatedReminder.targetDateTime) {
-        sharedUtils.scheduleMultiStageReminder(calculatedReminder, sendReminderNotification);
+        const notificationFn = (msg) => sharedUtils.sendReminderNotification(msg, telegramBot, MY_TELEGRAM_CHAT_ID);
+        sharedUtils.scheduleMultiStageReminder(calculatedReminder, notificationFn);
     }
     
     console.log('Reminder saved, total reminders:', sharedUtils.getReminders().length);
@@ -333,134 +262,11 @@ async function saveImportantUpdate(categorization, fromChatId) {
     await sharedUtils.sendImmediateNotification('IMPORTANT', update.content, fromChatId, telegramBot, MY_TELEGRAM_CHAT_ID);
 }
 
-async function executeAction(action, command) {
-    if (['CANCEL_REMINDER', 'DELETE_MEMORY', 'SAVE_MEMORY', 'SET_REMINDER', 'BLOCK_CONTACT', 'UNBLOCK_CONTACT'].includes(action)) {
-        switch (action) {
-            case 'CANCEL_REMINDER':
-                await sharedUtils.handleCancelReminder(command, sendToMyChat);
-                break;
-            case 'DELETE_MEMORY':
-                await sharedUtils.handleDeleteMemory(command, sendToMyChat);
-                break;
-            case 'SAVE_MEMORY':
-                await sharedUtils.handleSaveMemory(command, MY_CHAT_ID, sendToMyChat, telegramBot, MY_TELEGRAM_CHAT_ID);
-                break;
-            case 'SET_REMINDER':
-                await sharedUtils.createReminder(command, MY_CHAT_ID, GEMINI_API_KEY, sendReminderNotification, sendToMyChat, telegramBot, MY_TELEGRAM_CHAT_ID);
-                break;
-            case 'BLOCK_CONTACT':
-                await handleBlockContact(command);
-                break;
-            case 'UNBLOCK_CONTACT':
-                await handleUnblockContact(command);
-                break;
-        }
-    } else {
-        await sharedUtils.executeAction(action, command, sendToMyChat);
-    }
-}
 
-async function handleBlockContact(command) {
-    const match = command.match(/block\s+contact\s+(.+)/i);
-    if (!match) {
-        await sendToMyChat('Use: "block contact [chat_id] [reason]"');
-        return;
-    }
-    
-    const parts = match[1].split(' ');
-    const chatId = parts[0];
-    const reason = parts.slice(1).join(' ') || 'Manual block';
-    
-    sharedUtils.addBlockedContact(chatId, reason);
-    await sendToMyChat(`Blocked contact: ${chatId}`);
-}
 
-async function handleUnblockContact(command) {
-    const match = command.match(/unblock\s+contact\s+(.+)/i);
-    if (!match) {
-        await sendToMyChat('Use: "unblock contact [chat_id]"');
-        return;
-    }
-    
-    const chatId = match[1].trim();
-    const removed = sharedUtils.removeBlockedContact(chatId);
-    
-    if (removed) {
-        await sendToMyChat(`Unblocked contact: ${chatId}`);
-    } else {
-        await sendToMyChat(`Contact not found in blocked list: ${chatId}`);
-    }
-}
 
-async function handleDirectBlock(command) {
-    const input = command.replace('block ', '').trim();
-    if (!input) {
-        await sendToMyChat('Use: "block [phone_number/chat_id] [reason]"');
-        return;
-    }
-    
-    const parts = input.split(' ');
-    const identifier = parts[0];
-    const reason = parts.slice(1).join(' ') || 'Manual block';
-    
-    const chatId = sharedUtils.phoneToWhatsAppId(identifier);
-    sharedUtils.addBlockedContact(chatId, reason);
-    await sendToMyChat(`Blocked: ${identifier} -> ${chatId}`);
-}
 
-async function handleDirectUnblock(command) {
-    const input = command.replace('unblock ', '').trim();
-    if (!input) {
-        await sendToMyChat('Use: "unblock [phone_number/chat_id]"');
-        return;
-    }
-    
-    const chatId = sharedUtils.phoneToWhatsAppId(input);
-    const removed = sharedUtils.removeBlockedContact(chatId);
-    
-    if (removed) {
-        await sendToMyChat(`Unblocked: ${input} -> ${chatId}`);
-    } else {
-        await sendToMyChat(`Not found in blocked list: ${chatId}`);
-    }
-}
 
-async function handleDirectAddPriority(command) {
-    const input = command.replace('add priority ', '').trim();
-    const parts = input.split(' ');
-    
-    if (parts.length < 2) {
-        await sendToMyChat('Use: "add priority [phone/chatId] [name] [keywords]"\nExample: "add priority 9876543210 Vipul bhaiya,urgent"');
-        return;
-    }
-    
-    const identifier = parts[0];
-    const name = parts[1];
-    const keywords = parts.slice(2).join(' ').split(',').map(k => k.trim()).filter(k => k);
-    
-    const chatId = sharedUtils.phoneToWhatsAppId(identifier);
-    const rules = keywords.length > 0 ? [{ type: 'ONLY_KEYWORDS', keywords }] : [];
-    
-    sharedUtils.addPriorityContact(chatId, 'HIGH', rules, name);
-    await sendToMyChat(`Added priority contact: ${name} (${chatId})\nKeywords: ${keywords.join(', ') || 'All messages'}`);
-}
-
-async function handleDirectRemovePriority(command) {
-    const input = command.replace('remove priority ', '').trim();
-    if (!input) {
-        await sendToMyChat('Use: "remove priority [phone_number/chat_id]"');
-        return;
-    }
-    
-    const chatId = sharedUtils.phoneToWhatsAppId(input);
-    const removed = sharedUtils.removePriorityContact(chatId);
-    
-    if (removed) {
-        await sendToMyChat(`Removed priority contact: ${removed.name || chatId}`);
-    } else {
-        await sendToMyChat(`Not found in priority list: ${chatId}`);
-    }
-}
 
 client.initialize();
 

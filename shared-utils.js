@@ -242,6 +242,65 @@ async function sendImmediateNotification(type, content, fromChatId, telegramBot,
     }
 }
 
+async function categorizeMessage(messageBody, apiKey) {
+    if (!apiKey || apiKey === 'your_gemini_api_key_here') {
+        console.log('Gemini API key not configured, skipping categorization');
+        return null;
+    }
+    
+    console.log('Sending message to Gemini for categorization...');
+    
+    const categorizePrompt = `Analyze this message and categorize it. Return JSON format:
+
+        {
+        "type": "REMINDER|MEMORY|IMPORTANT|NONE",
+        "priority": "HIGH|MEDIUM|LOW",
+        "content": "formatted for whatsapp and briefly summarised extracted content ensuring easy readability",
+        "datetime": "exact date/time as mentioned in message, null if no date/time"
+        }
+
+        Rules:
+        - MEMORY: containing information about birthdays, anniversaries or containing the keyword "!memory". and strcitly nothing else should be categorized as memory.
+        - REMINDER: Contains time/date references with tasks to do (and not birthdays or anniversaries) or containing the keyword "!reminder"
+        - IMPORTANT: Urgent info, updates, news or containing the keyword "!important"
+        - HIGH priority: Urgent, time-sensitive, emergency
+        - MEDIUM priority: Important but not urgent
+        - LOW priority: General info
+        - For datetime: Extract EXACTLY as written (e.g. "tomorrow at 3pm", "21st September 2025", "10am")
+
+        Message: "${messageBody}"
+
+        Return only valid JSON:`;
+    
+    try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: categorizePrompt }] }]
+            })
+        });
+        
+        if (!response.ok) return null;
+        
+        const data = await response.json();
+        let rawResult = data.candidates[0].content.parts[0].text.trim();
+        console.log('Gemini response:', rawResult);
+        
+        if (rawResult.startsWith('```json')) {
+            rawResult = rawResult.replace(/```json\s*/, '').replace(/\s*```$/, '');
+        }
+        
+        const result = JSON.parse(rawResult);
+        console.log('Parsed result:', result);
+        
+        return result.type === 'NONE' ? null : result;
+    } catch (error) {
+        console.error('Error categorizing message:', error);
+        return null;
+    }
+}
+
 function scheduleExistingReminders(notificationCallback, filterFn = () => true) {
     const activeReminders = reminders.filter(r => r.active && r.targetDateTime);
     console.log(`Found ${activeReminders.length} active reminders to schedule...`);
@@ -751,6 +810,211 @@ function removeMemory(index) {
     return null;
 }
 
+async function sendReminderNotification(message, notificationBot, chatId) {
+    try {
+        if (notificationBot && chatId) {
+            await notificationBot.sendMessage(chatId, message);
+        }
+    } catch (error) {
+        console.error('Error sending reminder notification:', error);
+    }
+}
+
+async function handleDirectBlock(command, chatId, messageSender) {
+    const input = command.replace('block ', '').trim();
+    if (!input) {
+        await messageSender('Use: "block [phone_number/chat_id] [reason]"');
+        return;
+    }
+    
+    const parts = input.split(' ');
+    const identifier = parts[0];
+    const reason = parts.slice(1).join(' ') || 'Manual block';
+    
+    const targetChatId = phoneToWhatsAppId(identifier);
+    contactManager.addBlockedContact(targetChatId, reason);
+    await messageSender(`Blocked: ${identifier} -> ${targetChatId}`);
+}
+
+async function handleDirectUnblock(command, chatId, messageSender) {
+    const input = command.replace('unblock ', '').trim();
+    if (!input) {
+        await messageSender('Use: "unblock [phone_number/chat_id]"');
+        return;
+    }
+    
+    const targetChatId = phoneToWhatsAppId(input);
+    const removed = contactManager.removeBlockedContact(targetChatId);
+    
+    if (removed) {
+        await messageSender(`Unblocked: ${input} -> ${targetChatId}`);
+    } else {
+        await messageSender(`Not found in blocked list: ${targetChatId}`);
+    }
+}
+
+async function handleDirectAddPriority(command, chatId, messageSender) {
+    const input = command.replace('add priority ', '').trim();
+    const parts = input.split(' ');
+    
+    if (parts.length < 2) {
+        await messageSender('Use: "add priority [phone/chatId] [name] [keywords]"\nExample: "add priority 9876543210 Vipul bhaiya,urgent"');
+        return;
+    }
+    
+    const identifier = parts[0];
+    const name = parts[1];
+    const keywords = parts.slice(2).join(' ').split(',').map(k => k.trim()).filter(k => k);
+    
+    const targetChatId = phoneToWhatsAppId(identifier);
+    const rules = keywords.length > 0 ? [{ type: 'ONLY_KEYWORDS', keywords }] : [];
+    
+    contactManager.addPriorityContact(targetChatId, 'HIGH', rules, name);
+    await messageSender(`Added priority contact: ${name} (${targetChatId})\nKeywords: ${keywords.join(', ') || 'All messages'}`);
+}
+
+async function handleDirectRemovePriority(command, chatId, messageSender) {
+    const input = command.replace('remove priority ', '').trim();
+    if (!input) {
+        await messageSender('Use: "remove priority [phone_number/chat_id]"');
+        return;
+    }
+    
+    const targetChatId = phoneToWhatsAppId(input);
+    const removed = contactManager.removePriorityContact(targetChatId);
+    
+    if (removed) {
+        await messageSender(`Removed priority contact: ${removed.name || targetChatId}`);
+    } else {
+        await messageSender(`Not found in priority list: ${targetChatId}`);
+    }
+}
+
+function getStatusMessage(chatId) {
+    const activeRemindersCount = reminders.filter(r => r.active).length;
+    const contacts = contactManager.getContactLists();
+    return `Bot Status:
+• Memories: ${memories.length}
+• Active reminders: ${activeRemindersCount}
+• Important updates: ${importantUpdates.length}
+• Blocked contacts: ${contacts.blocked.length}
+• Priority contacts: ${contacts.priority.length}
+• Chat history: ${chatHistory[chatId]?.length || 0} messages`;
+}
+
+async function handleCommonCommands(command, fullChatId, chatId, apiKey, notificationFn, messageSender, notificationBot, telegramChatId, saveNextMode) {
+    if (command === 'show memories' || command === 'list memories' || command === 'my memories' || command.includes('what have I asked you to remember')) {
+        reloadMemories();
+        if (memories.length === 0) {
+            await messageSender('No memories saved yet.');
+            return true;
+        }
+        const memoryList = memories.map((m, i) => `${i + 1}. ${m.content}${m.autoCreated ? ' (auto)' : ''}`);
+        await messageSender(`Your memories:\n${memoryList.join('\n')}\n\nTo delete: "delete memory 1"`);
+        return true;
+    }
+    
+    if (command === 'show reminders' || command === 'list reminders' || command === 'my reminders') {
+        reloadReminders();
+        const activeReminders = reminders.filter(r => r.active);
+        if (activeReminders.length === 0) {
+            await messageSender('No active reminders.');
+            return true;
+        }
+        const reminderList = activeReminders.map((r, i) => {
+            const date = r.targetDateTime ? new Date(r.targetDateTime).toLocaleString() : 'No date';
+            return `${i + 1}. ${r.task} - ${date}${r.autoCreated ? ' (auto)' : ''}`;
+        });
+        await messageSender(`Your reminders:\n${reminderList.join('\n')}\n\nTo cancel: "cancel reminder 1"`);
+        return true;
+    }
+    
+    if (command === 'show updates' || command === 'list updates' || command === 'my updates' || command.includes('important updates')) {
+        if (importantUpdates.length === 0) {
+            await messageSender('No important updates.');
+            return true;
+        }
+        const updateList = importantUpdates.map((u, i) => {
+            const priority = u.priority === 'HIGH' ? 'HIGH' : u.priority === 'MEDIUM' ? 'MED' : 'LOW';
+            return `${i + 1}. [${priority}] ${u.content} (${u.timestamp})`;
+        });
+        await messageSender(`Important updates:\n${updateList.join('\n')}\n\nTo clear: "delete all updates"`);
+        importantUpdates.forEach(u => u.read = true);
+        saveData();
+        return true;
+    }
+    
+    if (command.includes('delete all memories') || command.includes('clear all memories')) {
+        const count = clearAllMemories();
+        await messageSender(count === 0 ? 'No memories to delete.' : `Deleted all ${count} memories.`);
+        return true;
+    }
+    
+    if (command.includes('delete all reminders') || command.includes('clear all reminders') || command.includes('cancel all reminders')) {
+        const activeCount = clearAllReminders();
+        await messageSender(activeCount === 0 ? 'No active reminders to delete.' : `Cancelled all ${activeCount} reminders.`);
+        return true;
+    }
+    
+    if (command.includes('delete all updates') || command.includes('clear all updates')) {
+        const count = clearAllUpdates();
+        await messageSender(count === 0 ? 'No updates to delete.' : `Deleted all ${count} updates.`);
+        return true;
+    }
+    
+    if (command.includes('cancel reminder') || command.includes('delete reminder')) {
+        await handleCancelReminder(command, messageSender);
+        return true;
+    }
+    
+    if (command.includes('delete memory') || command.includes('remove memory')) {
+        await handleDeleteMemory(command, messageSender);
+        return true;
+    }
+    
+    if (command.includes('save') && command.includes('memory')) {
+        await handleSaveMemory(command, fullChatId, messageSender, notificationBot, telegramChatId);
+        return true;
+    }
+    
+    if (command === 'save next to memory') {
+        saveNextMode[chatId] = true;
+        await messageSender('Ready to save your next message to memory');
+        return true;
+    }
+    
+    const interpretedAction = await interpretCommand(command, apiKey);
+    
+    if (interpretedAction) {
+        if (['CANCEL_REMINDER', 'DELETE_MEMORY', 'SAVE_MEMORY', 'SET_REMINDER'].includes(interpretedAction)) {
+            switch (interpretedAction) {
+                case 'CANCEL_REMINDER':
+                    await handleCancelReminder(command, messageSender);
+                    break;
+                case 'DELETE_MEMORY':
+                    await handleDeleteMemory(command, messageSender);
+                    break;
+                case 'SAVE_MEMORY':
+                    await handleSaveMemory(command, fullChatId, messageSender, notificationBot, telegramChatId);
+                    break;
+                case 'SET_REMINDER':
+                    await createReminder(command, fullChatId, apiKey, notificationFn, messageSender, notificationBot, telegramChatId);
+                    break;
+            }
+        } else {
+            await executeAction(interpretedAction, command, messageSender);
+        }
+        return true;
+    }
+    
+    if (command.includes('remind')) {
+        await createReminder(command, fullChatId, apiKey, notificationFn, messageSender, notificationBot, telegramChatId);
+        return true;
+    }
+    
+    return false;
+}
+
 module.exports = {
     loadData,
     saveData,
@@ -772,6 +1036,14 @@ module.exports = {
     generateDailySummary,
     setupPeriodicReminderCheck,
     sendImmediateNotification,
+    sendReminderNotification,
+    categorizeMessage,
+    handleDirectBlock,
+    handleDirectUnblock,
+    handleDirectAddPriority,
+    handleDirectRemovePriority,
+    getStatusMessage,
+    handleCommonCommands,
     shouldProcessContact: contactManager.shouldProcessContact,
     applyContactRules: contactManager.applyContactRules,
     addBlockedContact: contactManager.addBlockedContact,

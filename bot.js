@@ -73,8 +73,7 @@ client.on('message', async (message) => {
     
     sharedUtils.addToHistory(chatId, 'user', messageBody);
     
-    if (!messageBody.startsWith(BOT_MESSAGE_PREFIX) && 
-        (!message.fromMe || (message.fromMe && !messageBody.startsWith(TRIGGER_WORD)))) {
+    if (!messageBody.startsWith(BOT_MESSAGE_PREFIX) && !messageBody.startsWith(TRIGGER_WORD)) {
         console.log(`Processing message for auto-categorization from ${chatId} (fromMe: ${message.fromMe})`);
         await processIncomingMessage(message, messageBody, chatId, contactInfo);
     }
@@ -116,29 +115,10 @@ client.on('message', async (message) => {
             return;
         }
         
-        const interpretedAction = await sharedUtils.interpretCommand(command, GEMINI_API_KEY);
+        const notificationFn = (msg) => sharedUtils.sendReminderNotification(msg, telegramBot, MY_TELEGRAM_CHAT_ID);
+        const handled = await sharedUtils.handleCommonCommands(command, MY_CHAT_ID, chatId, GEMINI_API_KEY, notificationFn, sendToMyChat, telegramBot, MY_TELEGRAM_CHAT_ID, saveNextMode);
         
-        if (interpretedAction) {
-            const notificationFn = (msg) => sharedUtils.sendReminderNotification(msg, telegramBot, MY_TELEGRAM_CHAT_ID);
-            if (['CANCEL_REMINDER', 'DELETE_MEMORY', 'SAVE_MEMORY', 'SET_REMINDER'].includes(interpretedAction)) {
-                switch (interpretedAction) {
-                    case 'CANCEL_REMINDER':
-                        await sharedUtils.handleCancelReminder(command, sendToMyChat);
-                        break;
-                    case 'DELETE_MEMORY':
-                        await sharedUtils.handleDeleteMemory(command, sendToMyChat);
-                        break;
-                    case 'SAVE_MEMORY':
-                        await sharedUtils.handleSaveMemory(command, MY_CHAT_ID, sendToMyChat, telegramBot, MY_TELEGRAM_CHAT_ID);
-                        break;
-                    case 'SET_REMINDER':
-                        await sharedUtils.createReminder(command, MY_CHAT_ID, GEMINI_API_KEY, notificationFn, sendToMyChat, telegramBot, MY_TELEGRAM_CHAT_ID);
-                        break;
-                }
-            } else {
-                await sharedUtils.executeAction(interpretedAction, command, sendToMyChat);
-            }
-        } else {
+        if (!handled) {
             const response = await sharedUtils.getAIResponse(chatId, command, GEMINI_API_KEY);
             await sendToMyChat(response);
             sharedUtils.addToHistory(MY_CHAT_ID, 'assistant', response);
@@ -271,18 +251,13 @@ async function autoAddSchedule(categorization, fromChatId) {
     
     const calculated = await sharedUtils.calculateTargetDateTime(scheduleItem, GEMINI_API_KEY);
     
-    if (!calculated.task || calculated.task === '') {
-        calculated.task = categorization.content;
-    }
+    calculated.task = categorization.content;
+    calculated.priority = categorization.priority;
     
     if (!calculated.targetDateTime) {
         const today = new Date();
         today.setHours(10, 0, 0, 0);
         calculated.targetDateTime = today.toISOString();
-    }
-    
-    if (!calculated.priority) {
-        calculated.priority = categorization.priority;
     }
     
     if (categorization.contactLabel) {
@@ -293,13 +268,14 @@ async function autoAddSchedule(categorization, fromChatId) {
     
     const reminder = {
         id: Date.now() + 1,
-        task: calculated.task,
+        task: categorization.content,
         createdAt: calculated.timestamp,
         originalDateTime: calculated.originalDateTime,
         targetDateTime: calculated.targetDateTime,
         chatId: fromChatId,
         active: true,
-        priority: calculated.priority,
+        priority: categorization.priority,
+        contactLabel: categorization.contactLabel,
         autoCreated: true,
         isScheduleLinked: true
     };
@@ -311,7 +287,7 @@ async function autoAddSchedule(categorization, fromChatId) {
         sharedUtils.scheduleMultiStageReminder(reminder, notificationFn);
     }
     
-    await sharedUtils.sendImmediateNotification('SCHEDULE', calculated.task, fromChatId, telegramBot, MY_TELEGRAM_CHAT_ID);
+    await sharedUtils.sendImmediateNotification('SCHEDULE', categorization.content, fromChatId, telegramBot, MY_TELEGRAM_CHAT_ID);
 }
 
 

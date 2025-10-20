@@ -86,6 +86,7 @@ async function calculateTargetDateTime(reminder, apiKey) {
         return reminder;
     }
     
+    const now = new Date();
     const prompt = `Calculate target datetime and extract clean task. Return JSON format:
 
 {
@@ -95,14 +96,15 @@ async function calculateTargetDateTime(reminder, apiKey) {
 }
 
 Rules:
-- Current time: ${new Date().toISOString()}
-- Current local time: ${new Date().toLocaleString()}
-- Extract clean task from original text, removing time references
-- Calculate targetDateTime in LOCAL timezone (not UTC)
-- If no valid time found, set targetDateTime to null
-- Priority: HIGH for urgent/soon, MEDIUM for normal, LOW for far future
-- Examples: "tomorrow 3pm" → tomorrow at 15:00 LOCAL TIME, "10am" → today/tomorrow 10:00 LOCAL TIME
-- IMPORTANT: Return datetime in local timezone format, not UTC
+- Current datetime: ${now.toISOString()}
+- Current date: ${now.getDate()} ${now.toLocaleString('en-US', {month: 'long'})} ${now.getFullYear()}
+- Current time: ${now.toLocaleTimeString()}
+- Extract clean task from original text
+- Calculate targetDateTime as ISO string (YYYY-MM-DDTHH:mm:ss format)
+- If no time specified, use 10:00 AM
+- If date is in the past, set to null
+- Priority: HIGH for urgent, MEDIUM for normal, LOW for optional
+- Examples: "21st Oct" → 2025-10-21T10:00:00, "tomorrow 3pm" → tomorrow at 15:00:00
 
 Original text: "${reminder.originalDateTime}"
 
@@ -136,10 +138,16 @@ Return only valid JSON:`;
         
         const geminiResult = JSON.parse(rawResult);
         
+        let targetDateTime = geminiResult.targetDateTime;
+        if (targetDateTime && new Date(targetDateTime) <= new Date()) {
+            console.log(`Calculated datetime ${targetDateTime} is in the past, setting to null`);
+            targetDateTime = null;
+        }
+        
         return {
             ...reminder,
             task: geminiResult.task || reminder.task,
-            targetDateTime: geminiResult.targetDateTime,
+            targetDateTime: targetDateTime,
             priority: geminiResult.priority || 'MEDIUM'
         };
     } catch (error) {
@@ -180,7 +188,7 @@ function scheduleMultiStageReminder(reminder, notificationCallback) {
         return;
     }
     
-    const label = reminder.contactLabel || (reminder.priority === 'HIGH' ? '🔴' : reminder.priority === 'MEDIUM' ? '🟡' : '🟢');
+    const label = reminder.contactLabel || `[${reminder.priority}]`;
     
     if (totalDelay > oneHour) {
         const oneHourBeforeTime = targetDate.getTime() - oneHour;
@@ -426,6 +434,7 @@ async function interpretCommand(userCommand, apiKey) {
         - "SET_REMINDER" - if user wants to set a reminder or be reminded of something
         - "DELETE_MEMORY" - if user wants to delete/remove a memory
         - "CANCEL_REMINDER" - if user wants to cancel/delete a reminder
+        - "DELETE_SCHEDULE" - if user wants to delete/remove a schedule item
         - "DELETE_ALL_MEMORIES" - if user wants to delete/clear all memories
         - "DELETE_ALL_REMINDERS" - if user wants to delete/clear all reminders
         - "SHOW_SCHEDULE" - if user wants to see their schedule for a day
@@ -505,7 +514,7 @@ async function executeAction(action, command, messageSender) {
             }
             const scheduleList = todaySchedule.map((s, i) => {
                 const time = s.targetDateTime ? new Date(s.targetDateTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'No time';
-                const label = s.contactLabel || (s.priority === 'HIGH' ? '🔴' : s.priority === 'MEDIUM' ? '🟡' : '🟢');
+                const label = s.contactLabel || `[${s.priority}]`;
                 return `${i + 1}. ${label} ${s.task} - ${time}`;
             });
             await messageSender(`Today's Schedule:\n${scheduleList.join('\n')}`);
@@ -598,6 +607,161 @@ async function handleDeleteMemory(command, messageSender) {
     
     const deletedMemory = removeMemory(memoryIndex);
     await messageSender(`Deleted memory: ${deletedMemory.content}`);
+}
+
+async function handleViewItem(command, messageSender) {
+    const type = command.match(/view\s+(memory|reminder|schedule|blocked|priority)\s+(\d+)/i);
+    if (!type) {
+        await messageSender('Use: "view [memory|reminder|schedule|blocked|priority] [number]"');
+        return;
+    }
+    
+    const itemType = type[1].toLowerCase();
+    const itemNumber = parseInt(type[2]);
+    
+    if (itemType === 'memory') {
+        reloadMemories();
+        if (itemNumber < 1 || itemNumber > memories.length) {
+            await messageSender('Invalid memory number');
+            return;
+        }
+        await messageSender(`Memory ${itemNumber}:\n\`\`\`json\n${JSON.stringify(memories[itemNumber - 1], null, 2)}\n\`\`\``);
+    } else if (itemType === 'reminder') {
+        reloadReminders();
+        const activeReminders = reminders.filter(r => r.active);
+        if (itemNumber < 1 || itemNumber > activeReminders.length) {
+            await messageSender('Invalid reminder number');
+            return;
+        }
+        await messageSender(`Reminder ${itemNumber}:\n\`\`\`json\n${JSON.stringify(activeReminders[itemNumber - 1], null, 2)}\n\`\`\``);
+    } else if (itemType === 'schedule') {
+        reloadSchedule();
+        const todaySchedule = getTodaySchedule();
+        if (itemNumber < 1 || itemNumber > todaySchedule.length) {
+            await messageSender('Invalid schedule number');
+            return;
+        }
+        await messageSender(`Schedule ${itemNumber}:\n\`\`\`json\n${JSON.stringify(todaySchedule[itemNumber - 1], null, 2)}\n\`\`\``);
+    } else if (itemType === 'blocked') {
+        const contacts = contactManager.getContactLists();
+        if (itemNumber < 1 || itemNumber > contacts.blocked.length) {
+            await messageSender('Invalid blocked contact number');
+            return;
+        }
+        await messageSender(`Blocked Contact ${itemNumber}:\n\`\`\`json\n${JSON.stringify(contacts.blocked[itemNumber - 1], null, 2)}\n\`\`\``);
+    } else if (itemType === 'priority') {
+        const contacts = contactManager.getContactLists();
+        if (itemNumber < 1 || itemNumber > contacts.priority.length) {
+            await messageSender('Invalid priority contact number');
+            return;
+        }
+        await messageSender(`Priority Contact ${itemNumber}:\n\`\`\`json\n${JSON.stringify(contacts.priority[itemNumber - 1], null, 2)}\n\`\`\``);
+    }
+}
+
+async function handleUpdateItem(command, messageSender) {
+    const typeMatch = command.match(/update\s+(memory|reminder|schedule|blocked|priority)/i);
+    if (!typeMatch) {
+        await messageSender('Use: "update [memory|reminder|schedule|blocked|priority] {json}"');
+        return;
+    }
+    
+    const itemType = typeMatch[1].toLowerCase();
+    const jsonMatch = command.match(/\{[\s\S]*\}/);
+    
+    if (!jsonMatch) {
+        await messageSender('No valid JSON found in command');
+        return;
+    }
+    
+    try {
+        const updatedItem = JSON.parse(jsonMatch[0]);
+        
+        if (itemType === 'memory') {
+            const index = memories.findIndex(m => m.timestamp === updatedItem.timestamp);
+            if (index === -1) {
+                await messageSender('Memory not found');
+                return;
+            }
+            memories[index] = updatedItem;
+            saveData();
+            await messageSender('Memory updated successfully');
+        } else if (itemType === 'reminder') {
+            const index = reminders.findIndex(r => r.id === updatedItem.id);
+            if (index === -1) {
+                await messageSender('Reminder not found');
+                return;
+            }
+            reminders[index] = updatedItem;
+            saveData();
+            await messageSender('Reminder updated successfully');
+        } else if (itemType === 'schedule') {
+            const index = scheduleItems.findIndex(s => s.id === updatedItem.id);
+            if (index === -1) {
+                await messageSender('Schedule item not found');
+                return;
+            }
+            scheduleItems[index] = updatedItem;
+            saveData();
+            await messageSender('Schedule item updated successfully');
+        } else if (itemType === 'blocked') {
+            const contacts = contactManager.getContactLists();
+            const index = contacts.blocked.findIndex(c => c.chatId === updatedItem.chatId);
+            if (index === -1) {
+                await messageSender('Blocked contact not found');
+                return;
+            }
+            contacts.blocked[index] = updatedItem;
+            contactManager.saveContactLists();
+            await messageSender('Blocked contact updated successfully');
+        } else if (itemType === 'priority') {
+            const contacts = contactManager.getContactLists();
+            const index = contacts.priority.findIndex(c => c.chatId === updatedItem.chatId);
+            if (index === -1) {
+                await messageSender('Priority contact not found');
+                return;
+            }
+            contacts.priority[index] = updatedItem;
+            contactManager.saveContactLists();
+            await messageSender('Priority contact updated successfully');
+        }
+    } catch (error) {
+        await messageSender(`Error parsing JSON: ${error.message}`);
+    }
+}
+
+async function handleDeleteSchedule(command, messageSender) {
+    const dateMatch = command.match(/schedule\s+(?:for\s+)?(today|tomorrow|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2})\s+(\d+)/i) || 
+                      command.match(/schedule\s+(\d+)\s+(?:for\s+)?(today|tomorrow|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2})/i);
+    
+    let targetDate = new Date();
+    let scheduleNumber = null;
+    
+    if (dateMatch) {
+        const dateStr = dateMatch[1].match(/\d/) ? dateMatch[2] : dateMatch[1];
+        const numStr = dateMatch[1].match(/\d/) ? dateMatch[1] : dateMatch[2];
+        targetDate = parseDateFromCommand(dateStr);
+        scheduleNumber = parseInt(numStr);
+    } else {
+        const numMatch = command.match(/(\d+)/) || [null, extractNumberFromText(command)];
+        if (!numMatch || !numMatch[1]) {
+            await messageSender('Use: "delete schedule [number] for [date]" or "delete schedule [number]" for today');
+            return;
+        }
+        scheduleNumber = parseInt(numMatch[1]);
+    }
+    
+    const scheduleForDate = getScheduleForDate(targetDate);
+    const scheduleIndex = scheduleNumber - 1;
+    
+    if (scheduleIndex < 0 || scheduleIndex >= scheduleForDate.length) {
+        await messageSender(`Invalid schedule number for ${targetDate.toLocaleDateString()}`);
+        return;
+    }
+    
+    const targetSchedule = scheduleForDate[scheduleIndex];
+    removeScheduleItem(targetSchedule.id);
+    await messageSender(`Deleted schedule for ${targetDate.toLocaleDateString()}: ${targetSchedule.task}`);
 }
 
 async function handleSaveMemory(command, chatId, messageSender, notificationBot, telegramChatId) {
@@ -761,18 +925,18 @@ function generateMorningSchedule() {
     const todaySchedule = getTodaySchedule();
     
     if (todaySchedule.length === 0) {
-        return `Good morning! ☀️\n\nYou have no scheduled items for today (${today}).\n\nHave a great day!`;
+        return `Good morning!\n\nYou have no scheduled items for today (${today}).\n\nHave a great day!`;
     }
     
-    let message = `Good morning! ☀️\n\nHere's your schedule for today (${today}):\n\n`;
+    let message = `Good morning!\n\nHere's your schedule for today (${today}):\n\n`;
     
     todaySchedule.forEach((s, i) => {
         const time = s.targetDateTime ? new Date(s.targetDateTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'No specific time';
-        const label = s.contactLabel || (s.priority === 'HIGH' ? '🔴' : s.priority === 'MEDIUM' ? '🟡' : '🟢');
+        const label = s.contactLabel || `[${s.priority}]`;
         message += `${i + 1}. ${label} ${s.task} - ${time}\n`;
     });
     
-    message += '\nHave a productive day! 💪';
+    message += '\nHave a productive day!';
     return message;
 }
 
@@ -942,6 +1106,14 @@ function removeMemory(index) {
     return null;
 }
 
+function removeScheduleItem(id) {
+    const index = scheduleItems.findIndex(s => s.id === id);
+    if (index !== -1) {
+        scheduleItems.splice(index, 1);
+        saveData();
+    }
+}
+
 async function sendReminderNotification(message, notificationBot, chatId) {
     try {
         if (notificationBot && chatId) {
@@ -1084,15 +1256,15 @@ async function handleCommonCommands(command, fullChatId, chatId, apiKey, notific
         const scheduleForDate = getScheduleForDate(targetDate);
         
         if (scheduleForDate.length === 0) {
-            const dateStr = targetDate.toDateString();
+            const dateStr = targetDate.toLocaleDateString();
             await messageSender(`No schedule items for ${dateStr}.`);
             return true;
         }
         
-        const dateStr = targetDate.toDateString();
+        const dateStr = targetDate.toLocaleDateString();
         const scheduleList = scheduleForDate.map((s, i) => {
             const time = s.targetDateTime ? new Date(s.targetDateTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'No time';
-            const label = s.contactLabel || (s.priority === 'HIGH' ? '🔴' : s.priority === 'MEDIUM' ? '🟡' : '🟢');
+            const label = s.contactLabel || `[${s.priority}]`;
             return `${i + 1}. ${label} ${s.task} - ${time}`;
         });
         await messageSender(`Schedule for ${dateStr}:\n${scheduleList.join('\n')}`);
@@ -1127,6 +1299,21 @@ async function handleCommonCommands(command, fullChatId, chatId, apiKey, notific
         return true;
     }
     
+    if (command.includes('delete schedule') || command.includes('remove schedule')) {
+        await handleDeleteSchedule(command, messageSender);
+        return true;
+    }
+    
+    if (command.startsWith('view ')) {
+        await handleViewItem(command, messageSender);
+        return true;
+    }
+    
+    if (command.startsWith('update ')) {
+        await handleUpdateItem(command, messageSender);
+        return true;
+    }
+    
     if (command.includes('save') && command.includes('memory')) {
         await handleSaveMemory(command, fullChatId, messageSender, notificationBot, telegramChatId);
         return true;
@@ -1141,13 +1328,16 @@ async function handleCommonCommands(command, fullChatId, chatId, apiKey, notific
     const interpretedAction = await interpretCommand(command, apiKey);
     
     if (interpretedAction) {
-        if (['CANCEL_REMINDER', 'DELETE_MEMORY', 'SAVE_MEMORY', 'SET_REMINDER', 'ADD_SCHEDULE'].includes(interpretedAction)) {
+        if (['CANCEL_REMINDER', 'DELETE_MEMORY', 'DELETE_SCHEDULE', 'SAVE_MEMORY', 'SET_REMINDER', 'ADD_SCHEDULE'].includes(interpretedAction)) {
             switch (interpretedAction) {
                 case 'CANCEL_REMINDER':
                     await handleCancelReminder(command, messageSender);
                     break;
                 case 'DELETE_MEMORY':
                     await handleDeleteMemory(command, messageSender);
+                    break;
+                case 'DELETE_SCHEDULE':
+                    await handleDeleteSchedule(command, messageSender);
                     break;
                 case 'SAVE_MEMORY':
                     await handleSaveMemory(command, fullChatId, messageSender, notificationBot, telegramChatId);
@@ -1187,6 +1377,9 @@ module.exports = {
     executeAction,
     handleCancelReminder,
     handleDeleteMemory,
+    handleDeleteSchedule,
+    handleViewItem,
+    handleUpdateItem,
     handleSaveMemory,
     scheduleMultiStageReminder,
     scheduleExistingReminders,

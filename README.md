@@ -1,6 +1,6 @@
 # ShashBot - WhatsApp & Telegram Personal Assistant
 
-An intelligent personal assistant named ShashBot that runs locally with AI-powered auto-categorization, smart notifications, and multi-stage reminders across WhatsApp and Telegram platforms. Features both cloud-based (Gemini) and local (Ollama) AI processing options.
+An intelligent personal assistant named ShashBot (can be changed to whatever you wish) that runs locally with AI-powered auto-categorization, smart notifications, and multi-stage reminders across WhatsApp and Telegram platforms. Features both cloud-based (Gemini) and local (Ollama) AI processing options.
 
 ## Setup
 
@@ -39,11 +39,11 @@ An intelligent personal assistant named ShashBot that runs locally with AI-power
 
 4. Configure your bot settings in `.env`:
    ```
-   TRIGGER_WORD=!triggerBotHelp
+   TRIGGER_WORD=can_be_set_to_anything //(e.g. !triggerBotHelp)
    TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
    MY_TELEGRAM_CHAT_ID=your_telegram_chat_id
    MY_WHATSAPP_NUMBER=your_whatsapp_number
-   MY_BOT_NAME=ShashBot
+   MY_BOT_NAME=name_of_your_choice  //(e.g. ShashBot)
    ```
 
 5. Run the bots:
@@ -69,18 +69,18 @@ An intelligent personal assistant named ShashBot that runs locally with AI-power
 - **Manual Commands**: Full command support when using trigger word
 
 ### Telegram Bot Behavior  
-- **No Trigger Word**: Processes all messages directly
+- **No Trigger Word**: Processes all messages directly (not from all contacts, only the ones sent directly to the bot)
 - **Notification Hub**: Receives ALL notifications from both platforms
 - **Full Functionality**: Complete access to all features without trigger words
 
 ### Dual Processing System
-1. **Auto-Categorization**: Every message is analyzed by AI for automatic extraction of reminders, memories, and important updates
+1. **Auto-Categorization**: Every message (sent and received) is analyzed by AI for automatic extraction of reminders, memories, and important updates
 2. **Manual Commands**: Trigger-word commands for explicit actions and conversations
 
 ## Usage
 
 ### WhatsApp Commands (Trigger Word Required)
-All commands must start with `!triggerBotHelp`:
+All commands must start with the set trigger word:
 
 **Basic Commands:**
 - `!triggerBotHelp how are you?` - Chat with ShashBot
@@ -158,7 +158,7 @@ The bot automatically processes ALL messages using AI:
 - **Priority-Based**: High priority items get special attention
 
 ### 🧠 Unified Memory System
-- **Cross-Platform Sync**: Memories shared between WhatsApp and Telegram
+- **Cross-Platform Sync**: All saved data shared between WhatsApp and Telegram
 - **Auto-Detection**: Automatically captures personal information
 - **Context Awareness**: Uses saved memories in conversations
 - **Manual Management**: Add, view, and delete memories explicitly
@@ -180,10 +180,10 @@ The bot automatically processes ALL messages using AI:
 ## Privacy & Security
 
 ### 🔒 Local Processing with Ollama
-- **Complete Privacy**: All AI processing happens locally on your machine
+- **Complete Privacy**: All AI processing happens locally on your machine when using Ollama
 - **No Data Transmission**: Messages never leave your device for AI processing
-- **Offline Capability**: Works without internet connection once Ollama is set up
-- **Full Control**: You own and control the AI model and all data
+- **Offline Capability**: Works without internet connection once Ollama is set up except the network requirements for whatsapp and telegram clients to function
+- **Full Control**: If using Ollama, your data never leaves your device.
 
 ### 🛡️ General Privacy Features
 - **Local Storage**: All data stored locally in JSON files
@@ -296,14 +296,6 @@ Processes ALL messages from Mom with HIGH priority
 - **Telegram**: Built-in message filtering prevents infinite loops
 - **Cross-Platform**: Unique identifiers prevent duplicate processing
 - **Contact Management**: Shared contact lists work across both platforms
-
-## Personality & Behavior
-
-ShashBot is designed as Suman Verma's AI friend with these characteristics:
-- **Name Origin**: Bengali pronunciation of "Shashwat" (eternal)
-- **Personality**: Friendly, human-like responses rather than formal assistant tone
-- **Adaptability**: Adjusts response detail based on query complexity
-- **Memory Integration**: Uses personal memories to provide contextual responses
 
 ## Error Handling & Reliability
 

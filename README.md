@@ -1,6 +1,6 @@
 # ShashBot - WhatsApp & Telegram Personal Assistant
 
-An intelligent personal assistant named ShashBot that runs locally with AI-powered auto-categorization, smart notifications, and multi-stage reminders across WhatsApp and Telegram platforms.
+An intelligent personal assistant named ShashBot that runs locally with AI-powered auto-categorization, smart notifications, and multi-stage reminders across WhatsApp and Telegram platforms. Features both cloud-based (Gemini) and local (Ollama) AI processing options.
 
 ## Setup
 
@@ -16,15 +16,35 @@ An intelligent personal assistant named ShashBot that runs locally with AI-power
    - Choose a username ending in "bot" (e.g., "shashbot_personal_bot")
    - Copy the token you receive
 
-3. Configure your API keys in `.env`:
+3. **Choose AI Processing Option:**
+
+   **Option A: Cloud-based (Gemini)**
+   - Get a free Gemini API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
+   - Configure in `.env`:
+     ```
+     GEMINI_API_KEY=your_actual_gemini_api_key_here
+     ```
+
+   **Option B: Local AI (Ollama)**
+   - Install Ollama from [https://ollama.com](https://ollama.com)
+   - Pull the required model:
+     ```bash
+     ollama pull llama2
+     ```
+   - Configure in `.env`:
+     ```
+     OLLAMA_API_URL=http://localhost:11434
+     OLLAMA_MODEL=llama2
+     ```
+
+4. Configure your bot settings in `.env`:
    ```
    TRIGGER_WORD=!triggerBotHelp
-   GEMINI_API_KEY=your_actual_gemini_api_key_here
    TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
    MY_TELEGRAM_CHAT_ID=your_telegram_chat_id
+   MY_WHATSAPP_NUMBER=your_whatsapp_number
+   MY_BOT_NAME=ShashBot
    ```
-
-4. Get a free Gemini API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
 
 5. Run the bots:
    ```bash
@@ -54,7 +74,7 @@ An intelligent personal assistant named ShashBot that runs locally with AI-power
 - **Full Functionality**: Complete access to all features without trigger words
 
 ### Dual Processing System
-1. **Auto-Categorization**: Every message is analyzed by Gemini AI for automatic extraction of reminders, memories, and important updates
+1. **Auto-Categorization**: Every message is analyzed by AI for automatic extraction of reminders, memories, and important updates
 2. **Manual Commands**: Trigger-word commands for explicit actions and conversations
 
 ## Usage
@@ -68,7 +88,7 @@ All commands must start with `!triggerBotHelp`:
 - `!triggerBotHelp remind me to call mom at 6pm tomorrow`
 - `!triggerBotHelp show memories` - View saved memories
 - `!triggerBotHelp show reminders` - View active reminders
-- `!triggerBotHelp show updates` - View important updates
+- `!triggerBotHelp show schedule` - View today's schedule
 - `!triggerBotHelp !dbg status` - Bot status and statistics
 
 **Contact Management:**
@@ -88,7 +108,7 @@ Direct commands without any prefix:
 - `remind me about the meeting tomorrow at 10am`
 - `show memories` - View saved memories
 - `show reminders` - View active reminders
-- `show updates` - View important updates
+- `show schedule` - View today's schedule
 - `status` - Bot status and statistics
 
 **Contact Management:**
@@ -112,15 +132,16 @@ The bot automatically processes ALL messages using AI:
 - "I prefer working from home" → Auto-saves to memory
 - "My favorite restaurant is Pizza Palace" → Auto-saves to memory
 
-**Important Updates:**
-- "Flight delayed by 2 hours" → Auto-categorized as important
-- "Meeting cancelled" → Auto-categorized as important
+**Schedule Items:**
+- "Gym session today evening" → Auto-adds to schedule
+- "Dentist appointment tomorrow" → Auto-adds to schedule
+- "Team meeting at 3pm today" → Auto-adds to schedule
 
 ## Key Features
 
 ### 🤖 AI-Powered Intelligence
-- **Gemini Integration**: Uses Google Gemini 2.5 Flash for natural language processing
-- **Smart Categorization**: Automatically identifies reminders, memories, and important updates
+- **Dual AI Support**: Choose between cloud-based Gemini or local Ollama processing
+- **Smart Categorization**: Automatically identifies reminders, memories, and schedule items
 - **Intelligent DateTime Parsing**: Understands "tomorrow at 3pm", "next Friday", "in 2 hours"
 - **Priority Detection**: Automatically assigns HIGH/MEDIUM/LOW priority levels
 
@@ -151,9 +172,41 @@ The bot automatically processes ALL messages using AI:
 
 ### 📊 Advanced Features
 - **Daily Summary**: Automatic summary at 9 PM with today's reminders and updates
+- **Morning Schedule**: Daily schedule overview at 7 AM
 - **Real-Time Sync**: Changes reflect instantly across both platforms
 - **Robust Error Handling**: Graceful fallbacks when AI services are unavailable
 - **Debug Tools**: Comprehensive status and logging for troubleshooting
+
+## Privacy & Security
+
+### 🔒 Local Processing with Ollama
+- **Complete Privacy**: All AI processing happens locally on your machine
+- **No Data Transmission**: Messages never leave your device for AI processing
+- **Offline Capability**: Works without internet connection once Ollama is set up
+- **Full Control**: You own and control the AI model and all data
+
+### 🛡️ General Privacy Features
+- **Local Storage**: All data stored locally in JSON files
+- **Contact Privacy**: Blocked/priority contact lists excluded from git
+- **Secure Storage**: Personal information protected in local files
+- **No Cloud Dependencies**: Optional cloud processing only if explicitly configured
+
+## Example Use Cases
+
+### Personal Productivity
+- **Meeting Management**: "Team meeting tomorrow at 2pm" → Auto-creates reminder with notifications
+- **Task Tracking**: "Submit project report by Friday" → Schedule item with priority
+- **Memory Storage**: "My anniversary is on June 15th" → Auto-saves to memory
+
+### Contact Management
+- **VIP Handling**: Add boss as priority contact with "urgent" keyword filtering
+- **Spam Blocking**: Block promotional numbers and newsletters
+- **Family Priority**: Ensure family messages always get through with high priority
+
+### Cross-Platform Workflow
+- **Create on WhatsApp**: Set reminders while on the go
+- **Manage on Telegram**: Review and organize all items from desktop
+- **Unified Experience**: Seamless sync between platforms
 
 ## Data Structure
 
@@ -214,7 +267,7 @@ Processes ALL messages from Mom with HIGH priority
 ## Files Created
 - `saved_memories.json` - Shared memories from both platforms
 - `reminders.json` - Enhanced reminders with full metadata
-- `important_updates.json` - Auto-categorized important information
+- `schedule.json` - Schedule items with datetime information
 - `chat_history.json` - Conversation history for context
 - `blocked_contacts.json` - List of blocked contacts with reasons
 - `priority_contacts.json` - Priority contacts with custom rules
@@ -225,8 +278,8 @@ Processes ALL messages from Mom with HIGH priority
 ### AI Processing Pipeline
 1. **Contact Filtering**: Check if contact should be processed (blocked/priority rules)
 2. **Rule Application**: Apply contact-specific processing rules
-3. **Message Analysis**: Gemini analyzes qualifying messages
-4. **Smart Categorization**: Identifies type (reminder/memory/important/none)
+3. **Message Analysis**: AI analyzes qualifying messages (Gemini or Ollama)
+4. **Smart Categorization**: Identifies type (reminder/memory/schedule/none)
 5. **DateTime Calculation**: Converts natural language to precise timestamps
 6. **Priority Assignment**: Automatic urgency detection + contact priority
 7. **Cross-Platform Sync**: Real-time data synchronization
@@ -251,13 +304,6 @@ ShashBot is designed as Suman Verma's AI friend with these characteristics:
 - **Personality**: Friendly, human-like responses rather than formal assistant tone
 - **Adaptability**: Adjusts response detail based on query complexity
 - **Memory Integration**: Uses personal memories to provide contextual responses
-
-## Privacy & Security
-
-- **Local Processing**: All data stored locally, no cloud dependencies
-- **Contact Privacy**: Blocked/priority contact lists excluded from git
-- **Secure Storage**: Personal information protected in local JSON files
-- **No Data Sharing**: Messages and contacts never leave your device
 
 ## Error Handling & Reliability
 

@@ -1,4 +1,4 @@
-# ShashBot - WhatsApp & Telegram Personal Assistant
+# Pinger - WhatsApp & Telegram Personal Assistant
 
 An intelligent personal assistant named ShashBot (can be changed to whatever you wish) that runs locally with AI-powered auto-categorization, smart notifications, and multi-stage reminders across WhatsApp and Telegram platforms. Features both cloud-based (Gemini) and local (Ollama) AI processing options.
 

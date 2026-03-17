@@ -22,6 +22,7 @@ An intelligent personal assistant named ShashBot (can be changed to whatever you
    - Get a free Gemini API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
    - Configure in `.env`:
      ```
+     USE_LOCAL_LLM=false
      GEMINI_API_KEY=your_actual_gemini_api_key_here
      ```
 
@@ -30,20 +31,37 @@ An intelligent personal assistant named ShashBot (can be changed to whatever you
    - Pull the required model:
      ```bash
      ollama pull llama2
+     # or other models: llama3, mistral, codellama, etc.
      ```
    - Configure in `.env`:
      ```
-     OLLAMA_API_URL=http://localhost:11434
+     USE_LOCAL_LLM=true
+     LOCAL_LLM_URL=http://localhost:11434/api/generate
      OLLAMA_MODEL=llama2
+     ```
+   - Make sure Ollama is running before starting the bot:
+     ```bash
+     ollama serve
      ```
 
 4. Configure your bot settings in `.env`:
    ```
-   TRIGGER_WORD=can_be_set_to_anything //(e.g. !triggerBotHelp)
+   # Required settings
+   TRIGGER_WORD=!triggerBotHelp
    TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
    MY_TELEGRAM_CHAT_ID=your_telegram_chat_id
    MY_WHATSAPP_NUMBER=your_whatsapp_number
-   MY_BOT_NAME=name_of_your_choice  //(e.g. ShashBot)
+   MY_BOT_NAME=ShashBot
+   
+   # AI Configuration (choose one)
+   # For Ollama (local):
+   USE_LOCAL_LLM=true
+   LOCAL_LLM_URL=http://localhost:11434/api/generate
+   OLLAMA_MODEL=llama2
+   
+   # For Gemini (cloud):
+   USE_LOCAL_LLM=false
+   GEMINI_API_KEY=your_gemini_api_key_here
    ```
 
 5. Run the bots:

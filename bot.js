@@ -26,16 +26,83 @@ try {
 
 const client = new Client({
     authStrategy: new LocalAuth(),
-    puppeteer: { headless: true }
+    puppeteer: { 
+        headless: true,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--disable-gpu'
+        ],
+        timeout: 120000
+    },
+    webVersionCache: {
+        type: 'remote',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1015901620-alpha.html'
+    }
 });
 
 client.on('qr', (qr) => {
+    console.log('\n=================================');
     console.log('Scan this QR code with WhatsApp:');
+    console.log('=================================\n');
     qrcode.generate(qr, { small: true });
+    console.log('\n=================================');
+    console.log('Waiting for QR code scan...');
+    console.log('=================================\n');
 });
 
-client.on('ready', () => {
-    console.log('WhatsApp bot is ready!');
+client.on('authenticated', () => {
+    console.log('✅ WhatsApp authentication successful');
+});
+
+client.on('auth_failure', (msg) => {
+    console.error('❌ WhatsApp authentication failed:', msg);
+    console.log('Try deleting .wwebjs_auth folder and scanning QR again');
+});
+
+client.on('disconnected', (reason) => {
+    console.log('⚠️  WhatsApp disconnected:', reason);
+    console.log('Attempting to reconnect...');
+});
+
+client.on('loading_screen', (percent, message) => {
+    console.log('Loading WhatsApp...', percent, message);
+});
+
+client.on('ready', async () => {
+    console.log('\n✅ WhatsApp bot is ready and connected!');
+    console.log('Trigger word:', TRIGGER_WORD);
+    console.log('Your WhatsApp ID:', MY_CHAT_ID);
+    console.log('=================================\n');
+
+    try {
+        await client.pupPage.evaluate(() => {
+            const originalSendSeen = window.WWebJS.sendSeen;
+            
+            window.WWebJS.sendSeen = async function(chatId) {
+                try {
+                    // Try the original function
+                    return await originalSendSeen.call(this, chatId);
+                } catch (error) {
+                    // If it crashes with the specific 'markedUnread' error, ignore it and continue
+                    if (error.message && error.message.includes('markedUnread')) {
+                        console.log('Prevented sendSeen crash for chat:', chatId);
+                        return true; 
+                    }
+                    // If it's a different error, throw it
+                    throw error;
+                }
+            };
+        });
+        console.log('✅ Applied "markedUnread" crash fix.');
+    } catch (err) {
+        console.error('Failed to apply crash fix:', err);
+    }
+
     sharedUtils.loadData();
     const notificationFn = (msg) => sharedUtils.sendReminderNotification(msg, telegramBot, MY_TELEGRAM_CHAT_ID);
     sharedUtils.scheduleExistingReminders(notificationFn, (r) => !r.chatId.startsWith('telegram_'));
@@ -59,6 +126,8 @@ client.on('message_create', async (message) => {
 });
 client.on('message', async (message) => {
     if (message.from === 'status@broadcast') return;
+
+    if (message.body.startsWith(BOT_MESSAGE_PREFIX)) return;
     
     const chatId = message.fromMe ? (message.to || message.from) : message.from;
     const messageBody = message.body;
@@ -82,62 +151,130 @@ client.on('message', async (message) => {
         return;
     }
     
-    const command = messageBody.substring(TRIGGER_WORD.length).trim();
+    // Check bot access permission
+    if (!sharedUtils.hasBotAccess(chatId)) {
+        console.log(`Bot access denied for ${chatId}`);
+        return; // silently ignore - don't reveal bot exists
+    }
     
+    const command = messageBody.substring(TRIGGER_WORD.length).trim();
+    const replyChatId = chatId; // reply to whoever sent the trigger word
+    const replyFn = (msg) => sendToChat(replyChatId, msg);
+
     try {
         if (command === 'test' || command === '') {
-            await sendToMyChat('Bot is working! Trigger word: ' + TRIGGER_WORD);
+            await replyFn('Bot is working! Trigger word: ' + TRIGGER_WORD);
             return;
         }
         
         if (command === '!dbg status') {
-            await sendToMyChat(sharedUtils.getStatusMessage(chatId));
+            await replyFn(sharedUtils.getStatusMessage(chatId));
             return;
         }
         
         if (command.startsWith('block ')) {
-            await sharedUtils.handleDirectBlock(command, chatId, sendToMyChat);
+            await sharedUtils.handleDirectBlock(command, chatId, replyFn);
             return;
         }
         
         if (command.startsWith('unblock ')) {
-            await sharedUtils.handleDirectUnblock(command, chatId, sendToMyChat);
+            await sharedUtils.handleDirectUnblock(command, chatId, replyFn);
             return;
         }
         
         if (command.startsWith('add priority ')) {
-            await sharedUtils.handleDirectAddPriority(command, chatId, sendToMyChat);
+            await sharedUtils.handleDirectAddPriority(command, chatId, replyFn);
             return;
         }
         
         if (command.startsWith('remove priority ')) {
-            await sharedUtils.handleDirectRemovePriority(command, chatId, sendToMyChat);
+            await sharedUtils.handleDirectRemovePriority(command, chatId, replyFn);
+            return;
+        }
+        
+        if (command.startsWith('grant access ')) {
+            const number = command.substring('grant access '.length).trim().replace(/\D/g, '');
+            if (number.length >= 7) {
+                const targetChatId = sharedUtils.phoneToWhatsAppId(number);
+                sharedUtils.addBotAccessContact(targetChatId, number);
+                await replyFn(`✅ Bot access granted to ${number}`);
+            } else {
+                await replyFn('❌ Invalid number format. Use: grant access 1234567890');
+            }
+            return;
+        }
+        
+        if (command.startsWith('revoke access ')) {
+            const number = command.substring('revoke access '.length).trim().replace(/\D/g, '');
+            if (number.length >= 7) {
+                const targetChatId = sharedUtils.phoneToWhatsAppId(number);
+                const removed = sharedUtils.removeBotAccessContact(targetChatId);
+                if (removed) {
+                    await replyFn(`✅ Bot access revoked from ${number}`);
+                } else {
+                    await replyFn(`❌ ${number} didn't have bot access`);
+                }
+            } else {
+                await replyFn('❌ Invalid number format. Use: revoke access 1234567890');
+            }
+            return;
+        }
+        
+        if (command === 'list access') {
+            const lists = sharedUtils.getContactLists();
+            if (lists.botAccess.length === 0) {
+                await replyFn('No contacts have bot access (only you)');
+            } else {
+                const accessList = lists.botAccess.map(c => 
+                    `${c.name || c.chatId} (added: ${new Date(c.addedAt).toLocaleDateString()})`
+                ).join('\n');
+                await replyFn(`Bot Access List:\n${accessList}`);
+            }
             return;
         }
         
         const notificationFn = (msg) => sharedUtils.sendReminderNotification(msg, telegramBot, MY_TELEGRAM_CHAT_ID);
-        const handled = await sharedUtils.handleCommonCommands(command, MY_CHAT_ID, chatId, GEMINI_API_KEY, notificationFn, sendToMyChat, telegramBot, MY_TELEGRAM_CHAT_ID, saveNextMode);
+        const handled = await sharedUtils.handleCommonCommands(command, replyChatId, chatId, GEMINI_API_KEY, notificationFn, replyFn, telegramBot, MY_TELEGRAM_CHAT_ID, saveNextMode);
         
         if (!handled) {
             const response = await sharedUtils.getAIResponse(chatId, command, GEMINI_API_KEY);
-            await sendToMyChat(response);
-            sharedUtils.addToHistory(MY_CHAT_ID, 'assistant', response);
+            await replyFn(response);
+            sharedUtils.addToHistory(replyChatId, 'assistant', response);
         }
         
     } catch (error) {
         console.error('Error processing message:', error);
-        await sendToMyChat('Sorry, something went wrong');
+        await replyFn('Sorry, something went wrong');
     }
 });
 
+// async function sendToMyChat(text) {
+//     try {
+//         // const myChat = await client.getChatById(MY_CHAT_ID);
+//         // await myChat.sendMessage(BOT_MESSAGE_PREFIX + ' ' + text);
+//         await client.sendMessage(MY_CHAT_ID, BOT_MESSAGE_PREFIX + ' ' + text);
+//     } catch (error) {
+//         console.error('Error sending to my chat:', error);
+//     }
+// }
+
+
 async function sendToMyChat(text) {
     try {
-        const myChat = await client.getChatById(MY_CHAT_ID);
-        await myChat.sendMessage(BOT_MESSAGE_PREFIX + ' ' + text);
+        await client.sendMessage(MY_CHAT_ID, BOT_MESSAGE_PREFIX + ' ' + text);
     } catch (error) {
         console.error('Error sending to my chat:', error);
     }
 }
+
+async function sendToChat(targetChatId, text) {
+    try {
+        await client.sendMessage(targetChatId, BOT_MESSAGE_PREFIX + ' ' + text);
+    } catch (error) {
+        console.error('Error sending to chat:', targetChatId, error);
+    }
+}
+
 
 async function processIncomingMessage(message, messageBody, chatId, contactInfo) {
     try {
@@ -296,7 +433,40 @@ async function autoAddSchedule(categorization, fromChatId) {
 
 
 
-client.initialize();
+console.log('Starting WhatsApp bot...');
+console.log('Initializing client...');
+
+// Set a timeout for initialization
+const initTimeout = setTimeout(() => {
+    console.error('❌ WhatsApp initialization timed out after 120 seconds');
+    console.log('\nThis usually means:');
+    console.log('1. Network connectivity issues');
+    console.log('2. WhatsApp servers are slow/unreachable');
+    console.log('3. Corrupted session data in .wwebjs_auth folder');
+    console.log('\nTry deleting the .wwebjs_auth folder and restart');
+    process.exit(1);
+}, 120000);
+
+client.once('ready', () => {
+    clearTimeout(initTimeout);
+});
+
+client.initialize().catch(err => {
+    clearTimeout(initTimeout);
+    console.error('❌ WhatsApp initialization failed:', err.message);
+    console.log('\nPossible causes:');
+    console.log('1. No internet connection');
+    console.log('2. DNS resolution issues (can\'t reach web.whatsapp.com)');
+    console.log('3. Firewall blocking WhatsApp');
+    console.log('4. Corrupted session data');
+    console.log('\nTroubleshooting:');
+    console.log('- Check your internet connection');
+    console.log('- Try: ping web.whatsapp.com');
+    console.log('- Check firewall settings');
+    console.log('- Delete .wwebjs_auth folder and try again');
+    console.log('- Try using a VPN if WhatsApp is blocked');
+    process.exit(1);
+});
 
 process.on('SIGINT', () => {
     console.log('\nShutting down WhatsApp bot...');

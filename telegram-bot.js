@@ -11,10 +11,23 @@ const MY_WHATSAPP_CHAT_ID = `91${process.env.MY_WHATSAPP_NUMBER}@c.us`;
 let whatsappClient = null;
 try {
     const { Client, LocalAuth } = require('whatsapp-web.js');
-    whatsappClient = new Client({ authStrategy: new LocalAuth({ clientId: 'telegram-notifications' }), puppeteer: { headless: true } });
-    whatsappClient.initialize();
+    whatsappClient = new Client({ 
+        authStrategy: new LocalAuth({ clientId: 'telegram-notifications' }), 
+        puppeteer: { 
+            headless: true,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu'
+            ]
+        } 
+    });
+    whatsappClient.initialize().catch(err => {
+        console.log('WhatsApp initialization failed:', err.message);
+    });
 } catch (error) {
-    console.log('WhatsApp not available for notifications');
+    console.log('WhatsApp not available for notifications:', error.message);
 }
 
 if (!TELEGRAM_BOT_TOKEN) {
@@ -24,7 +37,21 @@ if (!TELEGRAM_BOT_TOKEN) {
 
 let saveNextMode = {};
 
-const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
+const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { 
+    polling: {
+        interval: 2000,
+        autoStart: true,
+        params: {
+            timeout: 10
+        }
+    }
+});
+
+bot.on('polling_error', (error) => {
+    console.log('Telegram polling error:', error.code || error.message);
+    // Don't crash on network errors, just log and continue
+});
+
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const messageText = msg.text || '';
@@ -93,6 +120,47 @@ bot.on('message', async (msg) => {
             return;
         }
         
+        if (command.startsWith('grant access ')) {
+            const number = command.substring('grant access '.length).trim().replace(/\D/g, '');
+            if (number.length >= 7) {
+                const targetChatId = sharedUtils.phoneToWhatsAppId(number);
+                sharedUtils.addBotAccessContact(targetChatId, number);
+                await bot.sendMessage(chatId, `✅ Bot access granted to ${number}`);
+            } else {
+                await bot.sendMessage(chatId, '❌ Invalid number format. Use: grant access 1234567890');
+            }
+            return;
+        }
+        
+        if (command.startsWith('revoke access ')) {
+            const number = command.substring('revoke access '.length).trim().replace(/\D/g, '');
+            if (number.length >= 7) {
+                const targetChatId = sharedUtils.phoneToWhatsAppId(number);
+                const removed = sharedUtils.removeBotAccessContact(targetChatId);
+                if (removed) {
+                    await bot.sendMessage(chatId, `✅ Bot access revoked from ${number}`);
+                } else {
+                    await bot.sendMessage(chatId, `❌ ${number} didn't have bot access`);
+                }
+            } else {
+                await bot.sendMessage(chatId, '❌ Invalid number format. Use: revoke access 1234567890');
+            }
+            return;
+        }
+        
+        if (command === 'list access') {
+            const lists = sharedUtils.getContactLists();
+            if (lists.botAccess.length === 0) {
+                await bot.sendMessage(chatId, 'No contacts have bot access (only you)');
+            } else {
+                const accessList = lists.botAccess.map(c => 
+                    `${c.name || c.chatId} (added: ${new Date(c.addedAt).toLocaleDateString()})`
+                ).join('\n');
+                await bot.sendMessage(chatId, `Bot Access List:\n${accessList}`);
+            }
+            return;
+        }
+        
         const notificationFn = (msg) => sharedUtils.sendReminderNotification(msg, bot, MY_TELEGRAM_CHAT_ID);
         const messageSender = (msg) => bot.sendMessage(chatId, msg);
         const handled = await sharedUtils.handleCommonCommands(command, `telegram_${chatId}`, chatId, GEMINI_API_KEY, notificationFn, messageSender, bot, MY_TELEGRAM_CHAT_ID, saveNextMode);
@@ -136,10 +204,6 @@ sharedUtils.setupMorningSchedule(() => {
     bot.sendMessage(MY_TELEGRAM_CHAT_ID, schedule);
 });
 sharedUtils.setupPeriodicReminderCheck(notificationFn, (r) => r.chatId.startsWith('telegram_'));
-
-bot.on('polling_error', (error) => {
-    console.log('Telegram polling error:', error);
-});
 
 console.log('Telegram bot is ready!');
 

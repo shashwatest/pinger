@@ -11,3 +11,4 @@ blocked_contacts.json
 priority_contacts.json
 mem_media/
 *.log
+DOCUMENTATION.md

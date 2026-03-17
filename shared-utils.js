@@ -6,6 +6,59 @@ let reminders = [];
 let chatHistory = {};
 let scheduleItems = [];
 
+// AI Configuration Helper
+function getAIConfig() {
+    const useLocalLLM = process.env.USE_LOCAL_LLM === 'true';
+    
+    if (useLocalLLM) {
+        const localLLMUrl = process.env.LOCAL_LLM_URL;
+        const ollamaModel = process.env.OLLAMA_MODEL || 'llama2';
+        
+        if (!localLLMUrl || localLLMUrl === 'your_local_llm_url_here') {
+            console.warn('USE_LOCAL_LLM is true but LOCAL_LLM_URL not configured');
+            return { type: 'none' };
+        }
+        
+        return { 
+            type: 'ollama', 
+            url: localLLMUrl,
+            model: ollamaModel
+        };
+    } else {
+        const geminiKey = process.env.GEMINI_API_KEY;
+        
+        if (!geminiKey || geminiKey === 'your_gemini_api_key_here') {
+            return { type: 'none' };
+        }
+        
+        return { 
+            type: 'gemini', 
+            apiKey: geminiKey 
+        };
+    }
+}
+
+// Build prompt (shared by both Gemini and Ollama)
+function buildPrompt(userMessage, context = [], memoriesContext = []) {
+    const systemPrompt = `You are ${process.env.MY_BOT_NAME}, Suman Verma's AI friend, remember you are not his assistant.
+    Respond in human-like language and be as precise or detailed based on your judgement of what would suffice for the query
+    Your name is the Bengali pronunciation of "Shashwat".`;
+    
+    let prompt = systemPrompt + '\n\n';
+    
+    if (memoriesContext.length > 0) {
+        prompt += 'Relevant memories:\n' + memoriesContext.map(m => `- ${m.content}`).join('\n') + '\n\n';
+    }
+    
+    if (context.length > 0) {
+        prompt += 'Recent conversation:\n' + context.slice(-10).map(msg => `${msg.role}: ${msg.content}`).join('\n') + '\n\n';
+    }
+    
+    prompt += `User: ${userMessage}\nAssistant:`;
+    
+    return prompt;
+}
+
 function loadData() {
     try {
         if (fs.existsSync('saved_memories.json')) {
@@ -33,24 +86,31 @@ function saveData() {
     fs.writeFileSync('schedule.json', JSON.stringify(scheduleItems, null, 2));
 }
 
-async function callGeminiAPI(userMessage, context = [], memoriesContext = [], apiKey) {
-    const systemPrompt = `You are ${process.env.MY_BOT_NAME}, Suman Verma's AI friend, remember you are not an assistant. 
-    Respond in human-like language and be as precise or detailed based on your judgement of what would suffice for the query
-    Your name is the Bengali pronunciation of "Shashwat"`;
+async function callOllamaAPI(prompt, config) {
+    const response = await fetch(config.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            model: config.model,
+            prompt: prompt,
+            stream: false
+        })
+    });
     
-    let prompt = systemPrompt + '\n\n';
-    
-    if (memoriesContext.length > 0) {
-        prompt += 'Relevant memories:\n' + memoriesContext.map(m => `- ${m.content}`).join('\n') + '\n\n';
+    if (!response.ok) {
+        throw new Error(`Ollama API error: ${response.status}`);
     }
     
-    if (context.length > 0) {
-        prompt += 'Recent conversation:\n' + context.slice(-10).map(msg => `${msg.role}: ${msg.content}`).join('\n') + '\n\n';
+    const data = await response.json();
+    if (!data.response) {
+        throw new Error('Invalid response from Ollama API');
     }
     
-    prompt += `User: ${userMessage}\nAssistant:`;
-    
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+    return data.response.trim();
+}
+
+async function callGeminiAPI(prompt, apiKey) {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemma-3-27b-it:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -69,20 +129,50 @@ async function callGeminiAPI(userMessage, context = [], memoriesContext = [], ap
     return data.candidates[0].content.parts[0].text.trim();
 }
 
+// Unified AI caller
+async function callAI(userMessage, context = [], memoriesContext = []) {
+    const config = getAIConfig();
+    
+    if (config.type === 'none') {
+        return `Hello! I received: "${userMessage}". Please configure AI in .env (USE_LOCAL_LLM=true with LOCAL_LLM_URL, or GEMINI_API_KEY).`;
+    }
+    
+    const prompt = buildPrompt(userMessage, context, memoriesContext);
+    
+    if (config.type === 'ollama') {
+        return await callOllamaAPI(prompt, config);
+    } else {
+        return await callGeminiAPI(prompt, config.apiKey);
+    }
+}
+
+// AI caller for structured prompts (returns raw response for JSON parsing)
+async function callAIForPrompt(prompt) {
+    const config = getAIConfig();
+    
+    if (config.type === 'none') {
+        console.log('AI not configured, skipping');
+        return null;
+    }
+    
+    if (config.type === 'ollama') {
+        return await callOllamaAPI(prompt, config);
+    } else {
+        return await callGeminiAPI(prompt, config.apiKey);
+    }
+}
+
 async function getAIResponse(chatId, userMessage, apiKey) {
     const context = chatHistory[chatId] || [];
     const relevantMemories = memories.slice(-5);
     
-    if (apiKey && apiKey !== 'your_gemini_api_key_here') {
-        return await callGeminiAPI(userMessage, context, relevantMemories, apiKey);
-    } else {
-        return `Hello! I received: "${userMessage}". Please configure GEMINI_API_KEY in .env for AI responses.`;
-    }
+    return await callAI(userMessage, context, relevantMemories);
 }
 
 async function calculateTargetDateTime(reminder, apiKey) {
-    if (!apiKey || apiKey === 'your_gemini_api_key_here') {
-        console.log('Gemini API key not configured, skipping datetime calculation');
+    const config = getAIConfig();
+    if (config.type === 'none') {
+        console.log('AI not configured, skipping datetime calculation');
         return reminder;
     }
     
@@ -111,34 +201,27 @@ Original text: "${reminder.originalDateTime}"
 Return only valid JSON:`;
     
     try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }]
-            })
-        });
+        const rawResult = await callAIForPrompt(prompt);
         
-        if (!response.ok) {
-            console.error('Gemini API error:', response.status);
+        if (!rawResult) {
+            console.error('AI returned no response');
             return reminder;
         }
         
-        const data = await response.json();
-        let rawResult = data.candidates[0].content.parts[0].text.trim();
-        
-        if (rawResult.startsWith('```json')) {
-            rawResult = rawResult.replace(/```json\s*/, '').replace(/\s*```$/, '');
+        // Clean up markdown formatting
+        let cleanResult = rawResult.trim();
+        if (cleanResult.startsWith('```json')) {
+            cleanResult = cleanResult.replace(/```json\s*/, '').replace(/\s*```$/, '');
         }
-        if (rawResult.startsWith('```')) {
-            rawResult = rawResult.replace(/```\s*/, '').replace(/\s*```$/, '');
+        if (cleanResult.startsWith('```')) {
+            cleanResult = cleanResult.replace(/```\s*/, '').replace(/\s*```$/, '');
         }
         
-        rawResult = rawResult.replace(/\n/g, ' ').replace(/\r/g, '').trim();
+        cleanResult = cleanResult.replace(/\n/g, ' ').replace(/\r/g, '').trim();
         
-        const geminiResult = JSON.parse(rawResult);
+        const result = JSON.parse(cleanResult);
         
-        let targetDateTime = geminiResult.targetDateTime;
+        let targetDateTime = result.targetDateTime;
         if (targetDateTime && new Date(targetDateTime) <= new Date()) {
             console.log(`Calculated datetime ${targetDateTime} is in the past, setting to null`);
             targetDateTime = null;
@@ -146,9 +229,9 @@ Return only valid JSON:`;
         
         return {
             ...reminder,
-            task: geminiResult.task || reminder.task,
+            task: result.task || reminder.task,
             targetDateTime: targetDateTime,
-            priority: geminiResult.priority || 'MEDIUM'
+            priority: result.priority || 'MEDIUM'
         };
     } catch (error) {
         console.error('Error calculating target datetime:', error);
@@ -253,12 +336,13 @@ async function sendImmediateNotification(type, content, fromChatId, telegramBot,
 }
 
 async function categorizeMessage(messageBody, apiKey) {
-    if (!apiKey || apiKey === 'your_gemini_api_key_here') {
-        console.log('Gemini API key not configured, skipping categorization');
+    const config = getAIConfig();
+    if (config.type === 'none') {
+        console.log('AI not configured, skipping categorization');
         return null;
     }
     
-    console.log('Sending message to Gemini for categorization...');
+    console.log('Sending message to AI for categorization...');
     
     const categorizePrompt = `Analyze this message and categorize it. Return JSON format:
 
@@ -283,25 +367,19 @@ async function categorizeMessage(messageBody, apiKey) {
         Return only valid JSON:`;
     
     try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: categorizePrompt }] }]
-            })
-        });
+        const rawResult = await callAIForPrompt(categorizePrompt);
         
-        if (!response.ok) return null;
+        if (!rawResult) return null;
         
-        const data = await response.json();
-        let rawResult = data.candidates[0].content.parts[0].text.trim();
-        console.log('Gemini response:', rawResult);
+        console.log('AI response:', rawResult);
         
-        if (rawResult.startsWith('```json')) {
-            rawResult = rawResult.replace(/```json\s*/, '').replace(/\s*```$/, '');
+        // Clean up markdown formatting
+        let cleanResult = rawResult.trim();
+        if (cleanResult.startsWith('```json')) {
+            cleanResult = cleanResult.replace(/```json\s*/, '').replace(/\s*```$/, '');
         }
         
-        const result = JSON.parse(rawResult);
+        const result = JSON.parse(cleanResult);
         console.log('Parsed result:', result);
         
         return result.type === 'NONE' ? null : result;
@@ -421,7 +499,8 @@ function extractNumberFromText(text) {
 }
 
 async function interpretCommand(userCommand, apiKey) {
-    if (!apiKey || apiKey === 'your_gemini_api_key_here') {
+    const config = getAIConfig();
+    if (config.type === 'none') {
         return null;
     }
     
@@ -452,18 +531,11 @@ async function interpretCommand(userCommand, apiKey) {
         Return only the action name or "NONE":`;
     
     try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: interpretPrompt }] }]
-            })
-        });
+        const rawResult = await callAIForPrompt(interpretPrompt);
         
-        if (!response.ok) return null;
+        if (!rawResult) return null;
         
-        const data = await response.json();
-        const action = data.candidates[0].content.parts[0].text.trim();
+        const action = rawResult.trim();
         
         return action === 'NONE' ? null : action;
     } catch (error) {
@@ -1402,6 +1474,9 @@ module.exports = {
     removeBlockedContact: contactManager.removeBlockedContact,
     addPriorityContact: contactManager.addPriorityContact,
     removePriorityContact: contactManager.removePriorityContact,
+    hasBotAccess: contactManager.hasBotAccess,
+    addBotAccessContact: contactManager.addBotAccessContact,
+    removeBotAccessContact: contactManager.removeBotAccessContact,
     getContactLists: contactManager.getContactLists,
     extractNumberFromText,
     phoneToWhatsAppId,

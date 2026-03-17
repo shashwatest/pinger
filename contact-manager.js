@@ -2,6 +2,7 @@ const fs = require('fs');
 
 let blockedContacts = [];
 let priorityContacts = [];
+let botAccessContacts = [];
 
 function loadContactLists() {
     try {
@@ -11,6 +12,9 @@ function loadContactLists() {
         if (fs.existsSync('priority_contacts.json')) {
             priorityContacts = JSON.parse(fs.readFileSync('priority_contacts.json', 'utf8'));
         }
+        if (fs.existsSync('bot_access_contacts.json')) {
+            botAccessContacts = JSON.parse(fs.readFileSync('bot_access_contacts.json', 'utf8'));
+        }
     } catch (error) {
         console.log('Error loading contact lists:', error.message);
     }
@@ -19,6 +23,7 @@ function loadContactLists() {
 function saveContactLists() {
     fs.writeFileSync('blocked_contacts.json', JSON.stringify(blockedContacts, null, 2));
     fs.writeFileSync('priority_contacts.json', JSON.stringify(priorityContacts, null, 2));
+    fs.writeFileSync('bot_access_contacts.json', JSON.stringify(botAccessContacts, null, 2));
 }
 
 function shouldProcessContact(chatId) {
@@ -100,6 +105,41 @@ function removePriorityContact(chatId) {
     return null;
 }
 
+function hasBotAccess(chatId) {
+    // Owner always has access
+    if (chatId === `91${process.env.MY_WHATSAPP_NUMBER}@c.us` || chatId.toString() === process.env.MY_TELEGRAM_CHAT_ID) {
+        return true;
+    }
+    
+    // Check if in bot access list
+    return botAccessContacts.some(c => c.chatId === chatId);
+}
+
+function addBotAccessContact(chatId, name = '') {
+    const existing = botAccessContacts.find(c => c.chatId === chatId);
+    if (existing) {
+        existing.name = name;
+        existing.updatedAt = new Date().toISOString();
+    } else {
+        botAccessContacts.push({
+            chatId,
+            name,
+            addedAt: new Date().toISOString()
+        });
+    }
+    saveContactLists();
+}
+
+function removeBotAccessContact(chatId) {
+    const index = botAccessContacts.findIndex(c => c.chatId === chatId);
+    if (index !== -1) {
+        const removed = botAccessContacts.splice(index, 1)[0];
+        saveContactLists();
+        return removed;
+    }
+    return null;
+}
+
 function applyContactRules(messageBody, contactInfo) {
     if (!contactInfo.rules || contactInfo.rules.length === 0) {
         return { processMessage: true, modifications: [] };
@@ -144,7 +184,8 @@ function applyContactRules(messageBody, contactInfo) {
 function getContactLists() {
     return {
         blocked: blockedContacts,
-        priority: priorityContacts
+        priority: priorityContacts,
+        botAccess: botAccessContacts
     };
 }
 
@@ -156,6 +197,9 @@ module.exports = {
     removeBlockedContact,
     addPriorityContact,
     removePriorityContact,
+    hasBotAccess,
+    addBotAccessContact,
+    removeBotAccessContact,
     applyContactRules,
     getContactLists
 };
